@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[oc]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Environment
+.env
+*.env.local
+
+# Node
+node_modules/
+client/dist/
+client/dist-ssr/
+*.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Docker
+*.override.yml
