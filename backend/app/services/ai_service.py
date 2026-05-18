@@ -77,6 +77,9 @@ _recommend_cache: TTLCache[RecommendResponse] = TTLCache(ttl=300, maxsize=256)
 _FILTER_EXTRACTION_PROMPT = (
     "You are the AI layer for an ecommerce platform. "
     "Extract structured filters from the user's natural language query. "
+    "For the 'query' field: keep ALL semantic concepts from the original query — never drop or simplify terms. "
+    "Only remove words that express hard filters (prices, numeric constraints). "
+    "If the user mentions multiple things (e.g. 'balls and learning'), keep all of them in the query. "
     "Use price_exact (==) for 'price X / costs X / exactly X / priced at X'. "
     "Use price_min (>=) for 'at least / from / minimum / equal or above / equal to or greater than / no less than / $X and above / $X and up / starting at $X'. "
     "Use price_max (<=) for 'up to / at most / maximum / equal or below / equal to or less than / no more than / $X and below'. "
@@ -84,7 +87,7 @@ _FILTER_EXTRACTION_PROMPT = (
     "Use price_below (<) ONLY when the query is strictly exclusive: 'below / under / less than' WITHOUT the word equal. "
     "Only set one price field at a time unless the query specifies a range. "
     "Return ONLY valid JSON in exactly this shape, with no markdown, no code fences, no explanations:\n"
-    '{"query": "<search phrase>", "filters": {"category": "", "age": null, '
+    '{"query": "<search phrase — preserve all concepts>", "filters": {"category": "", "age": null, '
     '"price_exact": null, "price_min": null, "price_max": null, "price_above": null, "price_below": null, "tags": []}}'
 )
 
@@ -243,9 +246,9 @@ class AIService:
             filters.price_exact, filters.price_min, filters.price_max,
             filters.price_above, filters.price_below,
         ])
-        max_distance = 0.9 if has_price_filter else 0.65
+        max_distance = 0.9 if has_price_filter else 0.75
 
-        query_vector = await self._get_embedding(query)
+        query_vector = await self._get_embedding(request.message)
         distance = ProductEmbedding.embedding.cosine_distance(query_vector)
         result = await self.db.execute(
             select(ProductEmbedding)

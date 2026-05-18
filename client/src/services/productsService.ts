@@ -66,6 +66,5 @@ export async function uploadProductImage(id: number, file: File): Promise<Produc
 }
 
 export function productImageUrl(image_url: string | null): string | null {
-  if (!image_url) return null
-  return image_url.startsWith('http') ? image_url : `${API_URL}${image_url}`
+  return image_url ?? null
 }

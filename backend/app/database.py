@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     azure_speech_key: str = ""
     azure_speech_region: str = "centralus"
 
+    azure_storage_connection_string: str = ""
+    azure_storage_container: str = "products"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

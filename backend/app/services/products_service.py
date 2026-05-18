@@ -1,7 +1,8 @@
-import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from azure.storage.blob import BlobSasPermissions, BlobServiceClient, ContentSettings, generate_blob_sas
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,17 @@ from app.database import settings
 from app.models.product import Product
 from app.schemas.product_schema import ProductCreate, ProductResponse, ProductUpdate
 
-_ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+_CONTENT_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+
+def _blob_client() -> BlobServiceClient:
+    return BlobServiceClient.from_connection_string(settings.azure_storage_connection_string)
 
 
 class ProductService:
@@ -52,6 +63,8 @@ class ProductService:
         product = await self.db.get(Product, product_id)
         if product is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+        if product.image_url:
+            self._delete_blob(product.image_url)
         await self.db.delete(product)
         await self.db.commit()
 
@@ -59,18 +72,48 @@ class ProductService:
         product = await self.db.get(Product, product_id)
         if product is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-        products_dir = Path(settings.upload_dir) / "products"
-        products_dir.mkdir(parents=True, exist_ok=True)
-        if product.image_url:
-            old_file = products_dir / Path(product.image_url).name
-            if old_file.exists():
-                await asyncio.to_thread(old_file.unlink)
+
         suffix = Path(filename).suffix.lower()
-        if suffix not in _ALLOWED_SUFFIXES:
+        content_type = _CONTENT_TYPES.get(suffix, "image/jpeg")
+        if suffix not in _CONTENT_TYPES:
             suffix = ".jpg"
-        dest = products_dir / f"{product_id}_{uuid.uuid4().hex}{suffix}"
-        await asyncio.to_thread(dest.write_bytes, content)
-        product.image_url = f"/uploads/products/{dest.name}"
+
+        blob_name = f"{product_id}_{uuid.uuid4().hex}{suffix}"
+
+        if product.image_url:
+            self._delete_blob(product.image_url)
+
+        blob_url = self._upload_blob(blob_name, content, content_type)
+        product.image_url = blob_url
         await self.db.commit()
         await self.db.refresh(product)
         return ProductResponse.model_validate(product)
+
+    def _upload_blob(self, blob_name: str, content: bytes, content_type: str) -> str:
+        client = _blob_client()
+        container = client.get_container_client(settings.azure_storage_container)
+        container.upload_blob(
+            name=blob_name,
+            data=content,
+            overwrite=True,
+            content_settings=ContentSettings(content_type=content_type),
+        )
+        sas_token = generate_blob_sas(
+            account_name=client.account_name,
+            container_name=settings.azure_storage_container,
+            blob_name=blob_name,
+            account_key=client.credential.account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.now(timezone.utc) + timedelta(days=365 * 10),
+        )
+        return f"https://{client.account_name}.blob.core.windows.net/{settings.azure_storage_container}/{blob_name}?{sas_token}"
+
+    def _delete_blob(self, blob_url: str) -> None:
+        blob_name = blob_url.split("/")[-1].split("?")[0]
+        try:
+            _blob_client().get_blob_client(
+                container=settings.azure_storage_container,
+                blob=blob_name,
+            ).delete_blob()
+        except Exception:
+            pass

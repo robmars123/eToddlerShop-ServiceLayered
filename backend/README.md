@@ -12,6 +12,7 @@ FastAPI backend with a simple, flat service-layer architecture.
 - **JWT** — Bearer token authentication
 - **Azure OpenAI** — embeddings and chat completions
 - **Azure Speech** — speech-to-text token issuance
+- **Azure Blob Storage** - Blob Storage for images
 
 ## Architecture
 

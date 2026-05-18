@@ -1,10 +1,8 @@
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from app.database import Base, SessionLocal, engine, settings
@@ -15,8 +13,6 @@ from app.routers import ai, auth, orders, products, users
 async def lifespan(app: FastAPI):
     # Import models here so SQLAlchemy registers them before create_all
     from app.models import order, product, product_embedding, user  # noqa: F401
-
-    Path(settings.upload_dir, "products").mkdir(parents=True, exist_ok=True)
 
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -67,10 +63,6 @@ app.include_router(products.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(orders.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
-
-Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=settings.upload_dir, html=False), name="uploads")
-
 
 @app.get("/")
 def root():

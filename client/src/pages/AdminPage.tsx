@@ -20,6 +20,7 @@ export function AdminPage() {
   const [pageError, setPageError] = useState<string | null>(null)
 
   const [addForm, setAddForm] = useState<ProductFormData>(EMPTY_FORM)
+  const [addImageFile, setAddImageFile] = useState<File | null>(null)
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
@@ -64,12 +65,20 @@ export function AdminPage() {
     e.preventDefault()
     const validationError = isValidForm(addForm)
     if (validationError) { setAddError(validationError); return }
+    if (addImageFile && addImageFile.size > 5 * 1024 * 1024) {
+      setAddError('Image must be under 5 MB.')
+      return
+    }
     setAdding(true)
     setAddError(null)
     try {
-      const created = await createProduct(toPayload(addForm))
+      let created = await createProduct(toPayload(addForm))
+      if (addImageFile) {
+        created = await uploadProductImage(created.id, addImageFile)
+      }
       setProducts(prev => [...prev, created])
       setAddForm(EMPTY_FORM)
+      setAddImageFile(null)
     } catch {
       setAddError('Failed to add product.')
     } finally {
@@ -134,7 +143,9 @@ export function AdminPage() {
 
         <AddProductForm
           form={addForm}
+          imageFile={addImageFile}
           onChange={setAddForm}
+          onImageChange={setAddImageFile}
           onSubmit={e => void handleAdd(e)}
           error={addError}
           adding={adding}
