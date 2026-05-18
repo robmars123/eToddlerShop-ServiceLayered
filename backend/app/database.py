@@ -26,12 +26,16 @@ class Settings(BaseSettings):
     azure_storage_connection_string: str = ""
     azure_storage_container: str = "products"
 
+    cors_origins: str = ""
+    database_ssl: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()
 
-engine = create_async_engine(settings.database_url, echo=settings.debug)
+_connect_args = {"ssl": True} if settings.database_ssl else {}
+engine = create_async_engine(settings.database_url, echo=settings.debug, connect_args=_connect_args)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

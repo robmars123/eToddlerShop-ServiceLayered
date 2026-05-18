@@ -40,6 +40,35 @@
 
 
   ══════════════════════════════════════════════════════════════════════════
+    ADMIN FLOW — Product Image Upload
+  ══════════════════════════════════════════════════════════════════════════
+
+    ┌──────────────────────────────────────────┐
+    │  Admin uploads image in Admin Panel      │
+    │  POST /products/{id}/image               │
+    └──────────────────┬───────────────────────┘
+                       │
+    ┌──────────────────▼───────────────────────┐
+    │  ProductService.upload_image()           │
+    │  Generates unique blob name:             │
+    │  "{product_id}_{uuid}.{ext}"             │
+    └──────────────────┬───────────────────────┘
+                       │
+    ┌──────────────────▼───────────────────────┐
+    │  Azure Blob Storage                      │
+    │  Container: products                     │
+    │  Uploads image bytes with ContentType    │
+    │  Generates 10-year SAS read URL          │
+    └──────────────────┬───────────────────────┘
+                       │
+    ┌──────────────────▼───────────────────────┐
+    │  Saves SAS URL → products.image_url      │
+    │  (PostgreSQL)                            │
+    │  Old blob deleted if replacing image     │
+    └──────────────────────────────────────────┘
+
+
+  ══════════════════════════════════════════════════════════════════════════
     USER FLOW A — AI Search  (/recommend)
   ══════════════════════════════════════════════════════════════════════════
 
@@ -91,16 +120,17 @@
                    │
     ┌──────────────▼───────────────────────────────────────────┐
     │  Azure OpenAI Embeddings (text-embedding-3-small)        │
-    │  Input : extracted query  →  "toys for girls"            │
+    │  Input : original message (full query, not filtered)     │
     │  Output: float[1536] query vector                        │
     └──────────────┬───────────────────────────────────────────┘
                    │
     ┌──────────────▼───────────────────────────────────────────┐
     │  pgvector cosine distance search                         │
-    │  WHERE cosine_distance(embedding, query_vector) < 0.8    │
+    │  max_distance: 0.75 (no price filter)                    │
+    │               0.90 (price filter present — wider net)    │
     │  ORDER BY distance  LIMIT 50                             │
     │                                                          │
-    │  → filter results: price <= 20  (from extracted filters) │
+    │  → apply hard price filters from Phase 1 in Python       │
     │  Output: list of candidate ProductEmbedding objects      │
     └──────────────┬───────────────────────────────────────────┘
                    │
@@ -119,6 +149,7 @@
     │  Frontend maps ranked IDs → full Product objects         │
     │  (from GET /products fetched in parallel)                │
     │  Renders ProductCard grid in ranked order                │
+    │  Product images served from Azure Blob SAS URLs          │
     └──────────────────────────────────────────────────────────┘
 
 
@@ -142,7 +173,7 @@
                       │
     ┌─────────────────▼──────────────────────────────────────┐
     │  pgvector cosine search                                │
-    │  top_k=5  max_distance=0.8                             │
+    │  top_k=5  max_distance=0.70                            │
     │  Output: 5 most relevant ProductEmbedding objects      │
     └─────────────────┬──────────────────────────────────────┘
                       │
@@ -177,5 +208,29 @@
   ├─────────────────────────┼────────────────────────┼─────────────────────────────────────────────────────┤
   │ Azure OpenAI Chat       │ gpt-4o-mini            │ Filter extraction, product re-ranking, chat replies │
   ├─────────────────────────┼────────────────────────┼─────────────────────────────────────────────────────┤
-  │ PostgreSQL + pgvector   │ —                      │ Stores and searches vectors via cosine distance     │
+  │ Azure Blob Storage      │ —                      │ Product image upload, storage, and SAS URL serving  │
+  ├─────────────────────────┼────────────────────────┼─────────────────────────────────────────────────────┤
+  │ PostgreSQL + pgvector   │ —                      │ Stores rows, vectors, image URLs; cosine search     │
   └─────────────────────────┴────────────────────────┴─────────────────────────────────────────────────────┘
+
+  ---
+  Deployment stack
+
+  ┌─────────────────────────┬────────────────────────────────────────────────────────────────┐
+  │       Component         │                         Detail                                 │
+  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Frontend                │ Azure Static Web App  (React SPA, built in CI)                 │
+  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Backend                 │ Azure App Service (Linux, Web App for Containers, B2 plan)     │
+  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Container registry      │ GitHub Container Registry (ghcr.io) — free, replaces ACR       │
+  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Database                │ Azure Database for PostgreSQL Flexible Server (pgvector enabled)│
+  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ CI/CD                   │ GitHub Actions → build image → push ghcr.io → deploy           │
+  └─────────────────────────┴────────────────────────────────────────────────────────────────┘
+
+  Local development: docker compose up --build
+    db  → pgvector/pgvector:pg16 (local named volume, no cloud connection)
+    api → FastAPI container (reads .env for Azure credentials)
+    client → nginx serving React build (hits localhost:8000)

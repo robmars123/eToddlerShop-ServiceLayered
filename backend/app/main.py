@@ -50,9 +50,10 @@ if os.getenv("DEBUG_PORT"):
 
 app = FastAPI(title="API", lifespan=lifespan)
 
+_extra_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost"],
+    allow_origins=["http://localhost:5173", "http://localhost", *_extra_origins],
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,
