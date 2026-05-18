@@ -32,7 +32,8 @@
       "PowerShell(Get-ChildItem -Recurse \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\" -Exclude '.venv', '.git' -Force | Where-Object {!$_.FullName.Contains\\('.venv'\\) -and !$_.FullName.Contains\\('.git'\\)} | Select-Object FullName, @{N='Type';E={if\\($_.PSIsContainer\\){'DIR'}else{'FILE'}}} | Sort-Object FullName | Format-Table -AutoSize -Wrap)",
       "PowerShell(tree \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\\\\backend\" -L 3 -I '.venv|__pycache__' 2>/dev/null || Get-ChildItem -Path \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\\\\backend\" -Recurse -Exclude '.venv', '__pycache__' | Where-Object {!$_.FullName.Contains\\('.venv'\\) -and !$_.FullName.Contains\\('__pycache__'\\)} | Select-Object @{N='Path';E={$_.FullName.Replace\\('D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\\\\backend\\\\', ''\\)}} | ForEach-Object {$_.Path})",
       "PowerShell(ls \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\\\\backend\\\\\")",
-      "PowerShell(Get-ChildItem -Recurse \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\\\\backend\\\\app\" | Where-Object { -not $_.PSIsContainer } | Select-Object FullName | Sort-Object FullName)"
+      "PowerShell(Get-ChildItem -Recurse \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\\\\backend\\\\app\" | Where-Object { -not $_.PSIsContainer } | Select-Object FullName | Sort-Object FullName)",
+      "Bash(..venvScriptspython.exe -c 'from passlib.context import CryptContext; pwd = CryptContext\\(schemes=['\\\\''bcrypt'\\\\''], deprecated='\\\\''auto'\\\\''\\); print\\(pwd.verify\\('\\\\''admin'\\\\'', '\\\\''$2b$12$qQwuHcseXmSdbH.rh36U..DEjr6kjQmyZeTYxETpdyB2fPvRFjQIC'\\\\''\\)\\)')"
     ]
   }
 }

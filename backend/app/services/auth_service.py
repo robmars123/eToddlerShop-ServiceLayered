@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
+import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +12,11 @@ from app.database import get_db, settings
 from app.models.user import User
 from app.schemas.auth_schema import LoginRequest, TokenData, TokenResponse, UserInfo
 
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _http_bearer = HTTPBearer()
+
+
+def _verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 class AuthService:
@@ -23,7 +26,7 @@ class AuthService:
     async def login(self, data: LoginRequest) -> TokenResponse:
         result = await self.db.execute(select(User).where(User.username == data.username))
         user = result.scalar_one_or_none()
-        if user is None or not _pwd_context.verify(data.password, user.hashed_password):
+        if user is None or not _verify_password(data.password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid username or password",

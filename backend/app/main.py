@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,22 +30,27 @@ async def lifespan(app: FastAPI):
 
 
 async def _seed_admin() -> None:
+    import bcrypt
     from app.models.user import User
-    from passlib.context import CryptContext
 
-    _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
     async with SessionLocal() as session:
         result = await session.execute(select(User).where(User.username == "admin"))
         if result.scalar_one_or_none() is None:
             session.add(User(
                 email="admin@example.com",
                 username="admin",
-                hashed_password=_pwd.hash("admin"),
+                hashed_password=hashed,
                 is_active=True,
                 role="admin",
             ))
             await session.commit()
 
+
+if os.getenv("DEBUG_PORT"):
+    import debugpy
+    debugpy.listen(("0.0.0.0", int(os.getenv("DEBUG_PORT", "5678"))))
+    print(f"[debugpy] listening on port {os.getenv('DEBUG_PORT')} — attach VS Code now")
 
 app = FastAPI(title="API", lifespan=lifespan)
 
