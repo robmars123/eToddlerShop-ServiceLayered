@@ -20,4 +20,5 @@ dependencies = [
     "uvicorn[standard]>=0.46.0",
     "debugpy>=1.8.20",
     "azure-storage-blob>=12.29.0",
+    "redis[asyncio]>=5.0.0",
 ]

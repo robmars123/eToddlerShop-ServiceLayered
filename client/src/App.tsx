@@ -8,6 +8,7 @@ import { ProductDetailPage } from './pages/ProductDetailPage'
 import { LoginPage } from './pages/LoginPage'
 import { AdminPage } from './pages/AdminPage'
 import { RecommendPage } from './pages/RecommendPage'
+import { ChatWidget } from './features/Chatbot'
 import { Role } from './types'
 
 export function App() {
@@ -30,6 +31,7 @@ export function App() {
               }
             />
           </Routes>
+          <ChatWidget />
         </BrowserRouter>
       </CartProvider>
     </AuthProvider>

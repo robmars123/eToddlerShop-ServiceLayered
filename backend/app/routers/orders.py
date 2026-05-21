@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.order_schema import OrderCreate, OrderResponse, OrderUpdate
-from app.services.orders_service import OrderService
+from app.services.orders.orders_service import OrderService
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 

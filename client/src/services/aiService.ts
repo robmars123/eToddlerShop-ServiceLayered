@@ -1,4 +1,5 @@
 import { API_URL } from '../config'
+import { getStoredToken } from '../features/Auth/AuthContext'
 
 export interface RecommendFilters {
   category: string
@@ -15,6 +16,20 @@ export interface RecommendResult {
   ranked_product_ids: number[]
   query: string
   filters: RecommendFilters
+}
+
+export interface EmbedResult {
+  indexed: number
+  message: string
+}
+
+export async function embedProducts(): Promise<EmbedResult> {
+  const res = await fetch(`${API_URL}/api/v1/ai/embed-products`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getStoredToken()}` },
+  })
+  if (!res.ok) throw new Error('Indexing failed')
+  return res.json() as Promise<EmbedResult>
 }
 
 export async function recommendProducts(message: string): Promise<RecommendResult> {

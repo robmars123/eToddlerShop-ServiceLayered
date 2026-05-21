@@ -29,7 +29,9 @@ function SendIcon() {
 
 export function ChatWidget() {
   const [open, setOpen] = useState(false)
-  const { messages, input, setInput, loading, error, send, bottomRef } = useChat()
+  const { messages, input, setInput, loading, streaming, error, send, bottomRef } = useChat()
+
+  const busy = loading || streaming
 
   function handleSubmit(e: { preventDefault(): void }): void {
     e.preventDefault()
@@ -105,6 +107,10 @@ export function ChatWidget() {
               </div>
             )}
 
+            {streaming && messages.length > 0 && messages[messages.length - 1].role === MessageRole.Assistant && (
+              <span className="inline-block w-0.5 h-3.5 bg-gray-500 animate-pulse ml-0.5 align-middle" />
+            )}
+
             {error && (
               <p role="alert" className="text-xs text-red-600 text-center px-2">
                 {error}
@@ -125,13 +131,13 @@ export function ChatWidget() {
               onKeyDown={handleKeyDown}
               placeholder="Ask about products…"
               rows={1}
-              disabled={loading}
+              disabled={busy}
               className="flex-1 resize-none border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gray-400 transition-colors disabled:opacity-50 max-h-24"
               aria-label="Message input"
             />
             <button
               type="submit"
-              disabled={!input.trim() || loading}
+              disabled={!input.trim() || busy}
               className="shrink-0 bg-gray-900 text-white p-2 rounded-lg hover:bg-gray-900 disabled:opacity-40 transition-colors"
               aria-label="Send message"
             >

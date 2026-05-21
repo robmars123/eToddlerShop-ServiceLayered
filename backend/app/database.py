@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     cors_origins: str = ""
     database_ssl: bool = False
+    redis_url: str = "redis://localhost:6379"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

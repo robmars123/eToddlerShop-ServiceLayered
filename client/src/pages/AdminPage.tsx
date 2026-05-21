@@ -4,6 +4,7 @@ import {
   fetchProducts, createProduct, updateProduct,
   deleteProduct, uploadProductImage,
 } from '../services/productsService'
+import { embedProducts } from '../services/aiService'
 import type { Product } from '../types'
 import {
   AddProductForm,
@@ -32,7 +33,25 @@ export function AdminPage() {
   const [uploadingId, setUploadingId] = useState<number | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
 
+  const [indexing, setIndexing] = useState(false)
+  const [indexResult, setIndexResult] = useState<string | null>(null)
+  const [indexError, setIndexError] = useState<string | null>(null)
+
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({})
+
+  async function handleIndexProducts(): Promise<void> {
+    setIndexing(true)
+    setIndexResult(null)
+    setIndexError(null)
+    try {
+      const result = await embedProducts()
+      setIndexResult(result.message)
+    } catch {
+      setIndexError('Indexing failed. Make sure products exist and try again.')
+    } finally {
+      setIndexing(false)
+    }
+  }
 
   async function load(): Promise<void> {
     setLoading(true)
@@ -137,9 +156,27 @@ export function AdminPage() {
     <div className="min-h-screen bg-white">
       <Navbar />
       <main className="max-w-5xl mx-auto px-6 py-10">
-        <h1 className="text-xl font-semibold tracking-[0.15em] uppercase text-[#1A1A1A] mb-8">
-          Admin — Products
-        </h1>
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-xl font-semibold tracking-[0.15em] uppercase text-[#1A1A1A]">
+            Admin — Products
+          </h1>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              type="button"
+              onClick={() => void handleIndexProducts()}
+              disabled={indexing}
+              className="px-4 py-2 text-sm font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-colors"
+            >
+              {indexing ? 'Indexing…' : 'Index Products for AI Search'}
+            </button>
+            {indexResult && (
+              <p className="text-xs text-green-600">{indexResult}</p>
+            )}
+            {indexError && (
+              <p className="text-xs text-red-600">{indexError}</p>
+            )}
+          </div>
+        </div>
 
         <AddProductForm
           form={addForm}

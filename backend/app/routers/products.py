@@ -6,9 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas.auth_schema import TokenData
 from app.schemas.product_schema import ProductCreate, ProductResponse, ProductUpdate
-from app.services.ai_service import AIService
-from app.services.auth_service import require_admin
-from app.services.products_service import ProductService
+from app.services.auth.auth_service import require_admin
+from app.services.ai.embedding_service import EmbeddingService
+from app.services.products.products_service import ProductService
+from app.services.ai.recommend_service import RecommendService
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -20,8 +21,15 @@ def get_product_service(db: Annotated[AsyncSession, Depends(get_db)]) -> Product
     return ProductService(db)
 
 
-def get_ai_service(db: Annotated[AsyncSession, Depends(get_db)]) -> AIService:
-    return AIService(db)
+def get_embedding_service(db: Annotated[AsyncSession, Depends(get_db)]) -> EmbeddingService:
+    return EmbeddingService(db)
+
+
+def get_recommend_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    embedding: Annotated[EmbeddingService, Depends(get_embedding_service)],
+) -> RecommendService:
+    return RecommendService(db, embedding)
 
 
 @router.get("/", response_model=list[ProductResponse])
@@ -42,12 +50,13 @@ async def create_product(
     data: ProductCreate,
     background_tasks: BackgroundTasks,
     service: Annotated[ProductService, Depends(get_product_service)],
-    ai: Annotated[AIService, Depends(get_ai_service)],
+    embedding: Annotated[EmbeddingService, Depends(get_embedding_service)],
+    recommend: Annotated[RecommendService, Depends(get_recommend_service)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
     product = await service.create_product(data)
-    background_tasks.add_task(ai.embed_single_product, product.id, product.name, product.description, product.price)
-    background_tasks.add_task(ai.invalidate_search_cache)
+    background_tasks.add_task(embedding.embed_single_product, product.id, product.name, product.description, product.price)
+    background_tasks.add_task(recommend.invalidate_search_cache)
     return product
 
 
@@ -57,12 +66,13 @@ async def update_product(
     data: ProductUpdate,
     background_tasks: BackgroundTasks,
     service: Annotated[ProductService, Depends(get_product_service)],
-    ai: Annotated[AIService, Depends(get_ai_service)],
+    embedding: Annotated[EmbeddingService, Depends(get_embedding_service)],
+    recommend: Annotated[RecommendService, Depends(get_recommend_service)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
     product = await service.update_product(product_id, data)
-    background_tasks.add_task(ai.embed_single_product, product.id, product.name, product.description, product.price)
-    background_tasks.add_task(ai.invalidate_search_cache)
+    background_tasks.add_task(embedding.embed_single_product, product.id, product.name, product.description, product.price)
+    background_tasks.add_task(recommend.invalidate_search_cache)
     return product
 
 
@@ -71,11 +81,13 @@ async def delete_product(
     product_id: int,
     background_tasks: BackgroundTasks,
     service: Annotated[ProductService, Depends(get_product_service)],
-    ai: Annotated[AIService, Depends(get_ai_service)],
+    embedding: Annotated[EmbeddingService, Depends(get_embedding_service)],
+    recommend: Annotated[RecommendService, Depends(get_recommend_service)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
     await service.delete_product(product_id)
-    background_tasks.add_task(ai.invalidate_search_cache)
+    background_tasks.add_task(embedding.delete_product_embedding, product_id)
+    background_tasks.add_task(recommend.invalidate_search_cache)
 
 
 @router.post("/{product_id}/image", response_model=ProductResponse)

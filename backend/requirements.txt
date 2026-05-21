@@ -36,6 +36,8 @@ markupsafe==3.0.3
     # via mako
 azure-storage-blob>=12.29.0
     # via backend
+redis[asyncio]>=5.0.0
+    # via backend
 openai>=1.0.0
     # via backend
 passlib==1.7.4

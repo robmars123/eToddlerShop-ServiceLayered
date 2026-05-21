@@ -1,7 +1,9 @@
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import redis.asyncio as aioredis
 from azure.storage.blob import BlobSasPermissions, BlobServiceClient, ContentSettings, generate_blob_sas
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -10,6 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import settings
 from app.models.product import Product
 from app.schemas.product_schema import ProductCreate, ProductResponse, ProductUpdate
+
+_redis: aioredis.Redis = aioredis.from_url(
+    settings.redis_url,
+    encoding="utf-8",
+    decode_responses=True,
+)
+
+_PRODUCTS_KEY = "products:all"
+_PRODUCTS_TTL = 60  # 1 minute
 
 _CONTENT_TYPES = {
     ".jpg": "image/jpeg",
@@ -29,8 +40,13 @@ class ProductService:
         self.db = db
 
     async def list_products(self) -> list[ProductResponse]:
+        cached = await _redis.get(_PRODUCTS_KEY)
+        if cached is not None:
+            return [ProductResponse.model_validate(p) for p in json.loads(cached)]
         result = await self.db.execute(select(Product))
-        return [ProductResponse.model_validate(p) for p in result.scalars().all()]
+        products = [ProductResponse.model_validate(p) for p in result.scalars().all()]
+        await _redis.set(_PRODUCTS_KEY, json.dumps([p.model_dump() for p in products]), ex=_PRODUCTS_TTL)
+        return products
 
     async def get_product(self, product_id: int) -> ProductResponse:
         product = await self.db.get(Product, product_id)
@@ -43,6 +59,7 @@ class ProductService:
         self.db.add(product)
         await self.db.commit()
         await self.db.refresh(product)
+        await _redis.delete(_PRODUCTS_KEY)
         return ProductResponse.model_validate(product)
 
     async def update_product(self, product_id: int, data: ProductUpdate) -> ProductResponse:
@@ -57,6 +74,7 @@ class ProductService:
             product.price = data.price
         await self.db.commit()
         await self.db.refresh(product)
+        await _redis.delete(_PRODUCTS_KEY)
         return ProductResponse.model_validate(product)
 
     async def delete_product(self, product_id: int) -> None:
@@ -67,6 +85,7 @@ class ProductService:
             self._delete_blob(product.image_url)
         await self.db.delete(product)
         await self.db.commit()
+        await _redis.delete(_PRODUCTS_KEY)
 
     async def upload_image(self, product_id: int, filename: str, content: bytes) -> ProductResponse:
         product = await self.db.get(Product, product_id)
@@ -87,6 +106,7 @@ class ProductService:
         product.image_url = blob_url
         await self.db.commit()
         await self.db.refresh(product)
+        await _redis.delete(_PRODUCTS_KEY)
         return ProductResponse.model_validate(product)
 
     def _upload_blob(self, blob_name: str, content: bytes, content_type: str) -> str:

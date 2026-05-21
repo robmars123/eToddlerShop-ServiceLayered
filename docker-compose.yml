@@ -15,6 +15,16 @@ services:
       interval: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
   api:
     build: ./backend
     restart: unless-stopped
@@ -23,9 +33,12 @@ services:
     env_file: ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/appdb
+      REDIS_URL: redis://redis:6379
       DEBUG: "false"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   client:
