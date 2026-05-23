@@ -1,3 +1,7 @@
+# Generates and persists vector embeddings for products using Azure OpenAI.
+# Embeddings are stored in the product_embeddings table (pgvector) and used
+# by RecommendService for cosine similarity search. Individual embeddings are
+# cached in Redis for 30 days since the same text always produces the same vector.
 import json
 import logging
 

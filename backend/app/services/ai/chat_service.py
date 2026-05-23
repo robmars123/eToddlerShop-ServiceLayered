@@ -1,3 +1,8 @@
+# RAG-based chat service grounded on the live product catalogue.
+# Calls RecommendService internally to retrieve relevant products, builds a
+# context string from the products table (never from cached embeddings),
+# and streams GPT-4o-mini responses as SSE chunks. The system prompt explicitly
+# prevents the model from referencing products outside the provided context.
 import json
 import logging
 from collections.abc import AsyncGenerator

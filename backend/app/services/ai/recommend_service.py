@@ -1,3 +1,10 @@
+# 3-phase AI recommendation pipeline:
+#   1. Filter extraction — GPT-4o-mini parses the user's natural language into
+#      structured price/category filters and a clean semantic query.
+#   2. Vector search — the query is embedded and cosine-searched against
+#      product_embeddings (pgvector). Hard price filters are applied in Python.
+#   3. Re-ranking — GPT-4o-mini re-ranks the shortlist by relevance.
+# Results are cached in Redis for 5 minutes and invalidated on any product change.
 import json
 import logging
 

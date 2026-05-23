@@ -1,3 +1,7 @@
+# Shared Azure OpenAI and Redis clients used by all AI services.
+# Centralised here so every service imports from one place instead of
+# each constructing its own connection. Also owns cache key builders
+# and TTL constants so those never drift out of sync across services.
 import hashlib
 
 import redis.asyncio as aioredis

@@ -1,3 +1,7 @@
+# Issues short-lived Azure Speech Service tokens for the frontend browser SDK.
+# The subscription key never leaves the server — the frontend receives only a
+# time-limited token and the region, which is the correct security pattern for
+# browser-based speech recognition.
 import httpx
 from fastapi import HTTPException
 
