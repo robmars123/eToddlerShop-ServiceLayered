@@ -1,62 +1,123 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  type ReactNode,
+} from 'react'
+import { useMsal, useIsAuthenticated } from '@azure/msal-react'
+import { InteractionStatus, InteractionRequiredAuthError } from '@azure/msal-browser'
 import type { User } from '../../types'
 import type { AuthContextValue } from './types'
-
 import { API_URL } from '../../config'
+import { loginRequest } from '../../config/msalConfig'
 
-const SESSION_KEY = 'auth_session'
+// ── Token storage (sync access for existing API services) ─────────────────────
 
-interface StoredSession {
-  user: User
-  token: string
-}
+const TOKEN_KEY = 'entra_access_token'
 
-function getStoredSession(): StoredSession | null {
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY)
-    return raw ? (JSON.parse(raw) as StoredSession) : null
-  } catch {
-    return null
-  }
-}
+function storeToken(t: string) { sessionStorage.setItem(TOKEN_KEY, t) }
+function clearToken()          { sessionStorage.removeItem(TOKEN_KEY)  }
 
 export function getStoredToken(): string | null {
-  return getStoredSession()?.token ?? null
+  return sessionStorage.getItem(TOKEN_KEY)
 }
+
+// ── User provisioning ─────────────────────────────────────────────────────────
+
+async function fetchUserProfile(accessToken: string): Promise<User> {
+  const res = await fetch(`${API_URL}/api/v1/auth/me`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) throw new Error('Failed to load user profile')
+  const d = await res.json() as { id: number; email: string; username: string; role: string }
+  return { id: d.id, email: d.email, username: d.username, role: d.role as User['role'] }
+}
+
+// ── Context ───────────────────────────────────────────────────────────────────
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => getStoredSession()?.user ?? null)
+  const { instance, accounts, inProgress } = useMsal()
+  const isAuthenticated = useIsAuthenticated()
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  async function login(username: string, password: string): Promise<boolean> {
+  // ── Acquire access token silently ───────────────────────────────────────────
+
+  const getToken = useCallback(async (): Promise<string | null> => {
+    const account = accounts[0]
+    if (!account) return null
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      })
-      if (!res.ok) return false
-
-      const data = await res.json() as { access_token: string; user: { username: string; role: string } }
-      const loggedIn: User = { username: data.user.username, role: data.user.role as User['role'] }
-      const session: StoredSession = { user: loggedIn, token: data.access_token }
-
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(session))
-      setUser(loggedIn)
-      return true
-    } catch {
-      return false
+      const result = await instance.acquireTokenSilent({ ...loginRequest, account })
+      // Use idToken — its aud = client_id, validated directly by the backend.
+      // No API scope required in the user flow.
+      const token = result.idToken || result.accessToken
+      storeToken(token)
+      return token
+    } catch (err) {
+      if (err instanceof InteractionRequiredAuthError) {
+        clearToken()
+        setUser(null)
+      }
+      return null
     }
-  }
+  }, [instance, accounts])
 
-  function logout(): void {
-    sessionStorage.removeItem(SESSION_KEY)
+  // ── Restore session when MSAL has an account ────────────────────────────────
+
+  useEffect(() => {
+    if (inProgress !== InteractionStatus.None) return
+    if (!isAuthenticated || accounts.length === 0) {
+      clearToken()
+      setUser(null)
+      setLoading(false)
+      return
+    }
+    void getToken().then(async (token) => {
+      if (!token) { setLoading(false); return }
+      try {
+        const profile = await fetchUserProfile(token)
+        setUser(profile)
+      } catch {
+        setUser(null)
+      } finally {
+        setLoading(false)
+      }
+    })
+  }, [isAuthenticated, inProgress]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Login via MSAL popup ────────────────────────────────────────────────────
+
+  const login = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const result = await instance.loginPopup(loginRequest)
+      instance.setActiveAccount(result.account)
+      const token = result.idToken || result.accessToken
+      storeToken(token)
+      const profile = await fetchUserProfile(token)
+      setUser(profile)
+      return { ok: true }
+    } catch (err) {
+      console.error('[Auth] login error:', err)
+      if (err instanceof Error && err.name === 'BrowserAuthError') return { ok: false }
+      const msg = err instanceof Error ? err.message : String(err)
+      return { ok: false, error: msg }
+    }
+  }, [instance])
+
+  // ── Logout ──────────────────────────────────────────────────────────────────
+
+  const logout = useCallback(() => {
+    clearToken()
     setUser(null)
-  }
+    void instance.logoutPopup({ postLogoutRedirectUri: window.location.origin })
+  }, [instance])
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, getToken }}>
       {children}
     </AuthContext.Provider>
   )

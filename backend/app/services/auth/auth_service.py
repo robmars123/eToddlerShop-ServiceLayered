@@ -1,68 +1,66 @@
-from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-import bcrypt
-import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, settings
+from app.database import get_db
 from app.models.user import User
-from app.schemas.auth_schema import LoginRequest, TokenData, TokenResponse, UserInfo
+from app.schemas.auth_schema import TokenData, UserMeResponse
+from app.services.auth.entra_token_validator import validate_entra_token
 
 _http_bearer = HTTPBearer()
 
 
-def _verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+async def _provision_user(claims: dict, db: AsyncSession) -> User:
+    """Find or create a local user from Entra token claims.
 
+    Lookup order:
+    1. By entra_oid — fast path for returning users
+    2. By email — links a pre-seeded record (e.g. admin) to the Entra identity
+    3. Create new record — first login for an unknown user
+    """
+    oid: str = claims.get("oid") or claims.get("sub", "")
+    email: str = (claims.get("email") or claims.get("preferred_username") or "").lower()
+    display_name: str = claims.get("name") or email.split("@")[0] or "User"
 
-class AuthService:
-    def __init__(self, db: AsyncSession):
-        self.db = db
+    result = await db.execute(select(User).where(User.entra_oid == oid))
+    user = result.scalar_one_or_none()
+    if user:
+        return user
 
-    async def login(self, data: LoginRequest) -> TokenResponse:
-        result = await self.db.execute(select(User).where(User.username == data.username))
+    if email:
+        result = await db.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
-        if user is None or not _verify_password(data.password, user.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid username or password",
-            )
-        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
-        token = jwt.encode(
-            {"sub": str(user.id), "username": user.username, "role": user.role, "exp": expire},
-            settings.jwt_secret_key,
-            algorithm=settings.jwt_algorithm,
-        )
-        return TokenResponse(
-            access_token=token,
-            user=UserInfo(username=user.username, role=user.role),
-        )
+        if user:
+            user.entra_oid = oid
+            await db.commit()
+            await db.refresh(user)
+            return user
+
+    user = User(
+        email=email,
+        username=display_name[:150],
+        entra_oid=oid,
+        is_active=True,
+        role="user",
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(_http_bearer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TokenData:
-    try:
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.jwt_secret_key,
-            algorithms=[settings.jwt_algorithm],
-        )
-        return TokenData(
-            user_id=int(payload["sub"]),
-            username=payload["username"],
-            role=payload["role"],
-        )
-    except (jwt.InvalidTokenError, KeyError, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    claims = validate_entra_token(credentials.credentials)
+    user = await _provision_user(claims, db)
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+    return TokenData(user_id=user.id, username=user.username, role=user.role)
 
 
 async def require_admin(
@@ -71,3 +69,15 @@ async def require_admin(
     if current_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
+
+
+class AuthService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def me(self, token_data: TokenData) -> UserMeResponse:
+        result = await self.db.execute(select(User).where(User.id == token_data.user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return UserMeResponse(id=user.id, email=user.email, username=user.username, role=user.role)

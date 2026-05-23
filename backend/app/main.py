@@ -11,32 +11,44 @@ from app.routers import ai, auth, orders, products, users
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Import models here so SQLAlchemy registers them before create_all
     from app.models import order, product, product_embedding, user  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # Additive migrations — safe to run on every startup
         await conn.execute(
             text("ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url VARCHAR(500)")
         )
+        await conn.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS entra_oid VARCHAR(36)")
+        )
+        # Remove the unique constraint on username; Entra display names are not globally unique
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'users_username_key' AND conrelid = 'users'::regclass
+                ) THEN
+                    ALTER TABLE users DROP CONSTRAINT users_username_key;
+                END IF;
+            END $$;
+        """))
 
     await _seed_admin()
     yield
 
 
 async def _seed_admin() -> None:
-    import bcrypt
     from app.models.user import User
 
-    hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
+    admin_email = settings.azure_entra_admin_email
     async with SessionLocal() as session:
-        result = await session.execute(select(User).where(User.username == "admin"))
+        result = await session.execute(select(User).where(User.email == admin_email))
         if result.scalar_one_or_none() is None:
             session.add(User(
-                email="admin@example.com",
+                email=admin_email,
                 username="admin",
-                hashed_password=hashed,
                 is_active=True,
                 role="admin",
             ))
@@ -64,6 +76,7 @@ app.include_router(products.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(orders.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
+
 
 @app.get("/")
 def root():

@@ -8,10 +8,17 @@ from sqlalchemy.orm import DeclarativeBase
 class Settings(BaseSettings):
     database_url: str
     debug: bool = False
-    jwt_secret_key: str = "change-this-to-a-long-random-secret-in-production"
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60
     upload_dir: str = "uploads"
+
+    # Azure Entra External ID (CIAM) — Native Authentication
+    azure_entra_tenant_id: str = ""
+    azure_entra_client_id: str = ""
+    # Full authority URL, e.g. https://{subdomain}.ciamlogin.com/{tenant-id}
+    azure_entra_authority: str = ""
+    # Audience claim in the access token — usually equals client_id for single-app setups
+    azure_entra_audience: str = ""
+    # Email of the seeded admin user (will be assigned admin role on first Entra login)
+    azure_entra_admin_email: str = "admin@example.com"
 
     azure_openai_endpoint: str = ""
     azure_openai_key: str = ""
