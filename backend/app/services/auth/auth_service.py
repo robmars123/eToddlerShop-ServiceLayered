@@ -5,7 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import get_db, settings
 from app.models.user import User
 from app.schemas.auth_schema import TokenData, UserMeResponse
 from app.services.auth.entra_token_validator import validate_entra_token
@@ -24,10 +24,15 @@ async def _provision_user(claims: dict, db: AsyncSession) -> User:
     oid: str = claims.get("oid") or claims.get("sub", "")
     email: str = (claims.get("email") or claims.get("preferred_username") or "").lower()
     display_name: str = claims.get("name") or email.split("@")[0] or "User"
+    admin_oid: str = settings.azure_entra_admin_oid.strip()
 
     result = await db.execute(select(User).where(User.entra_oid == oid))
     user = result.scalar_one_or_none()
     if user:
+        if admin_oid and oid == admin_oid and user.role != "admin":
+            user.role = "admin"
+            await db.commit()
+            await db.refresh(user)
         return user
 
     if email:
@@ -35,16 +40,35 @@ async def _provision_user(claims: dict, db: AsyncSession) -> User:
         user = result.scalar_one_or_none()
         if user:
             user.entra_oid = oid
+            if admin_oid and oid == admin_oid:
+                user.role = "admin"
             await db.commit()
             await db.refresh(user)
             return user
+    elif admin_oid and oid == admin_oid:
+        # Admin token has no email claim — link OID to the pre-seeded admin record by email setting
+        result = await db.execute(select(User).where(User.email == settings.azure_entra_admin_email))
+        user = result.scalar_one_or_none()
+        if user:
+            user.entra_oid = oid
+            user.role = "admin"
+            await db.commit()
+            await db.refresh(user)
+            return user
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is missing email claim",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
+    role = "admin" if (admin_oid and oid == admin_oid) else "user"
     user = User(
         email=email,
         username=display_name[:150],
         entra_oid=oid,
         is_active=True,
-        role="user",
+        role=role,
     )
     db.add(user)
     await db.commit()

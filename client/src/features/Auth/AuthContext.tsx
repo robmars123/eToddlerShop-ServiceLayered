@@ -89,20 +89,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
   }, [isAuthenticated, inProgress]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Login via MSAL popup ────────────────────────────────────────────────────
+  // ── Login via MSAL redirect ─────────────────────────────────────────────────
+  // Popup flow is blocked by COOP headers sent by Microsoft's login page.
 
   const login = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     try {
-      const result = await instance.loginPopup(loginRequest)
-      instance.setActiveAccount(result.account)
-      const token = result.idToken || result.accessToken
-      storeToken(token)
-      const profile = await fetchUserProfile(token)
-      setUser(profile)
-      return { ok: true }
+      await instance.loginRedirect(loginRequest)
+      return { ok: true } // unreachable — browser navigates away
     } catch (err) {
       console.error('[Auth] login error:', err)
-      if (err instanceof Error && err.name === 'BrowserAuthError') return { ok: false }
       const msg = err instanceof Error ? err.message : String(err)
       return { ok: false, error: msg }
     }
@@ -113,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     clearToken()
     setUser(null)
-    void instance.logoutPopup({ postLogoutRedirectUri: window.location.origin })
+    void instance.logoutRedirect({ postLogoutRedirectUri: window.location.origin })
   }, [instance])
 
   return (

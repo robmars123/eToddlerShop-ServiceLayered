@@ -46,8 +46,8 @@ services:
       context: ./client
       args:
         VITE_API_URL: http://localhost:8000
-        VITE_ENTRA_AUTHORITY: https://etoddlershop.ciamlogin.com/13333cc8-a56c-40f2-aa72-274b3ab0b071
-        VITE_ENTRA_CLIENT_ID: ce4b6ec8-1c32-4f48-9774-557e362cc93d
+        VITE_ENTRA_AUTHORITY: https://etoddlersciam.ciamlogin.com/31e396da-ee2b-4c54-a802-98218e952c34
+        VITE_ENTRA_CLIENT_ID: 144f4d0f-6ba5-470e-851a-29841afe95b8
         VITE_ENTRA_SCOPES: "openid offline_access profile"
     restart: unless-stopped
     ports:

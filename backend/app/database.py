@@ -17,9 +17,10 @@ class Settings(BaseSettings):
     azure_entra_authority: str = ""
     # Audience claim in the access token — usually equals client_id for single-app setups
     azure_entra_audience: str = ""
-    # Email of the seeded admin user (will be assigned admin role on first Entra login)
-    azure_entra_admin_email: str = "admin@example.com"
-
+    # Email of the pre-seeded admin user (matched on first Entra login to grant admin role)
+    azure_entra_admin_email: str = ""
+    # OID of the admin user from Entra — used when email claim is absent (CIAM external users)
+    azure_entra_admin_oid: str = ""
     azure_openai_endpoint: str = ""
     azure_openai_key: str = ""
     azure_openai_api_version: str = "2024-02-15-preview"

@@ -44,11 +44,11 @@ export function LoginPage() {
             disabled={busy}
             className="w-full bg-[#1A1A1A] text-white text-xs tracking-widest uppercase py-3 rounded-lg hover:bg-[#333] transition-colors disabled:opacity-50"
           >
-            {busy ? 'Opening…' : 'Sign in / Create account'}
+            {busy ? 'Redirecting…' : 'Sign in / Create account'}
           </button>
 
           <p className="mt-4 text-center text-xs text-gray-400">
-            A secure sign-in window will open.
+            You will be redirected to sign in securely.
           </p>
         </div>
       </main>
