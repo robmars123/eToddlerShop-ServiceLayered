@@ -71,6 +71,28 @@ class OrderService:
         )
         return _to_response(result2.scalar_one())
 
+    async def cancel_order(self, order_id: int, user_id: int) -> OrderResponse:
+        result = await self.db.execute(
+            select(Order).where(Order.id == order_id).options(selectinload(Order.items))
+        )
+        order = result.scalar_one_or_none()
+        if order is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        if order.user_id != user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        if order.status not in ("pending",):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot cancel an order with status '{order.status}'",
+            )
+        order.status = "cancelled"
+        await self.db.commit()
+        await self.db.refresh(order)
+        result2 = await self.db.execute(
+            select(Order).where(Order.id == order_id).options(selectinload(Order.items))
+        )
+        return _to_response(result2.scalar_one())
+
     async def delete_order(self, order_id: int) -> None:
         order = await self.db.get(Order, order_id)
         if order is None:

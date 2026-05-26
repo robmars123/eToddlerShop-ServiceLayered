@@ -8,6 +8,7 @@ import { ProductDetailPage } from './pages/ProductDetailPage'
 import { LoginPage } from './pages/LoginPage'
 import { AdminPage } from './pages/AdminPage'
 import { RecommendPage } from './pages/RecommendPage'
+import { OrdersPage } from './pages/OrdersPage'
 import { ChatWidget } from './features/Chatbot'
 import { Role } from './types'
 
@@ -22,6 +23,14 @@ export function App() {
             <Route path="/products/:id" element={<ProductDetailPage />} />
             <Route path="/cart" element={<CartPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route
+              path="/orders"
+              element={
+                <ProtectedRoute>
+                  <OrdersPage />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/admin"
               element={

@@ -58,6 +58,12 @@ export function Navbar() {
               <span className="text-xs tracking-widest uppercase text-[#1A1A1A] font-medium">
                 {user.username}
               </span>
+              <Link
+                to="/orders"
+                className="text-xs tracking-widest uppercase text-gray-500 hover:text-[#1A1A1A] transition-colors"
+              >
+                My Orders
+              </Link>
               <button
                 onClick={logout}
                 className="text-xs tracking-widest uppercase text-gray-500 hover:text-[#1A1A1A] transition-colors"

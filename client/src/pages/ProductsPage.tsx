@@ -18,11 +18,14 @@ export function ProductsPage() {
   const [status, setStatus] = useState<StatusValue>(Status.Loading)
   const { addToCart } = useCart()
 
-  useEffect(() => {
+  function load() {
+    setStatus(Status.Loading)
     fetchProducts()
       .then(data => { setProducts(data); setStatus(Status.Ok) })
       .catch(() => setStatus(Status.Error))
-  }, [])
+  }
+
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen bg-white">
@@ -45,9 +48,15 @@ export function ProductsPage() {
         )}
 
         {status === Status.Error && (
-          <p className="text-sm text-red-500" role="alert">
-            Failed to load products. Please try again later.
-          </p>
+          <div className="flex flex-col items-start gap-3">
+            <p className="text-sm text-red-500" role="alert">Failed to load products.</p>
+            <button
+              onClick={load}
+              className="text-xs tracking-widest uppercase border border-[#1A1A1A] text-[#1A1A1A] px-4 py-2 hover:bg-[#1A1A1A] hover:text-white transition-colors duration-200"
+            >
+              Try Again
+            </button>
+          </div>
         )}
 
         {status === Status.Ok && products.length === 0 && (

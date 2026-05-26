@@ -202,7 +202,15 @@ export function RecommendPage() {
 
         {/* Error */}
         {error && !loading && (
-          <p role="alert" className="text-center text-sm text-red-600 py-10">{error}</p>
+          <div className="flex flex-col items-center gap-3 py-10">
+            <p role="alert" className="text-sm text-red-600">{error}</p>
+            <button
+              onClick={() => { void search() }}
+              className="text-xs tracking-widest uppercase border border-[#1A1A1A] text-[#1A1A1A] px-4 py-2 hover:bg-[#1A1A1A] hover:text-white transition-colors duration-200"
+            >
+              Try Again
+            </button>
+          </div>
         )}
 
         {/* Results */}

@@ -1,5 +1,20 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Product } from '../../types'
+
+const STORAGE_KEY = 'cart'
+
+function loadCart(): CartItem[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as CartItem[]) : []
+  } catch {
+    return []
+  }
+}
+
+function saveCart(items: CartItem[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
+}
 
 export interface CartItem {
   product: Product
@@ -13,12 +28,15 @@ interface CartContextValue {
   addToCart: (product: Product) => void
   removeFromCart: (productId: number) => void
   updateQuantity: (productId: number, quantity: number) => void
+  clearCart: () => void
 }
 
 const CartContext = createContext<CartContextValue | null>(null)
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<CartItem[]>([])
+  const [items, setItems] = useState<CartItem[]>(loadCart)
+
+  useEffect(() => { saveCart(items) }, [items])
 
   function addToCart(product: Product) {
     setItems(prev => {
@@ -43,11 +61,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
     )
   }
 
+  function clearCart() { setItems([]) }
+
   const totalCount = items.reduce((sum, i) => sum + i.quantity, 0)
   const subtotal   = items.reduce((sum, i) => sum + i.product.price * i.quantity, 0)
 
   return (
-    <CartContext.Provider value={{ items, totalCount, subtotal, addToCart, removeFromCart, updateQuantity }}>
+    <CartContext.Provider value={{ items, totalCount, subtotal, addToCart, removeFromCart, updateQuantity, clearCart }}>
       {children}
     </CartContext.Provider>
   )
