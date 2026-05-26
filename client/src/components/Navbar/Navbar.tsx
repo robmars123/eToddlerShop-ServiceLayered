@@ -56,7 +56,7 @@ export function Navbar() {
           {user ? (
             <div className="hidden md:flex items-center gap-3">
               <span className="text-xs tracking-widest uppercase text-[#1A1A1A] font-medium">
-                {user.username}
+               Hi, {user.username}!
               </span>
               <Link
                 to="/orders"

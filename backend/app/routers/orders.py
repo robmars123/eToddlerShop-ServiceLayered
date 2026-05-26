@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.auth_schema import TokenData
-from app.schemas.order_schema import OrderCreate, OrderResponse, OrderUpdate
+from app.schemas.order_schema import OrderAnalytics, OrderCreate, OrderResponse, OrderUpdate
 from app.services.auth.auth_service import get_current_user, require_admin
 from app.services.orders.orders_service import OrderService
 
@@ -14,6 +14,14 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 
 def get_order_service(db: Annotated[AsyncSession, Depends(get_db)]) -> OrderService:
     return OrderService(db)
+
+
+@router.get("/analytics", response_model=OrderAnalytics)
+async def get_order_analytics(
+    service: Annotated[OrderService, Depends(get_order_service)],
+    _: Annotated[TokenData, Depends(require_admin)],
+):
+    return await service.get_analytics()
 
 
 @router.get("/", response_model=list[OrderResponse])

@@ -44,3 +44,17 @@ class OrderResponse(BaseModel):
     created_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class OrderPeriodStat(BaseModel):
+    period: str
+    count: int
+    revenue: float
+
+
+class OrderAnalytics(BaseModel):
+    by_day: list[OrderPeriodStat]
+    by_month: list[OrderPeriodStat]
+    by_year: list[OrderPeriodStat]
+    total_orders: int
+    total_revenue: float

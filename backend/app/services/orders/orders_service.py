@@ -1,10 +1,13 @@
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.order import Order, OrderItem
-from app.schemas.order_schema import OrderCreate, OrderItemResponse, OrderResponse, OrderStatus, OrderUpdate
+from app.schemas.order_schema import (
+    OrderAnalytics, OrderCreate, OrderItemResponse, OrderPeriodStat,
+    OrderResponse, OrderStatus, OrderUpdate,
+)
 
 
 def _to_response(order: Order) -> OrderResponse:
@@ -70,6 +73,47 @@ class OrderService:
             select(Order).where(Order.id == order_id).options(selectinload(Order.items))
         )
         return _to_response(result2.scalar_one())
+
+    async def get_analytics(self) -> OrderAnalytics:
+        async def _grouped(trunc: str) -> list[OrderPeriodStat]:
+            rows = await self.db.execute(
+                select(
+                    func.date_trunc(trunc, Order.created_at).label("period"),
+                    func.count(func.distinct(Order.id)).label("count"),
+                    func.coalesce(
+                        func.sum(OrderItem.unit_price * OrderItem.quantity), 0
+                    ).label("revenue"),
+                )
+                .join(OrderItem, OrderItem.order_id == Order.id)
+                .where(Order.status != "cancelled")
+                .group_by("period")
+                .order_by("period")
+            )
+            fmt = {"day": "%Y-%m-%d", "month": "%Y-%m", "year": "%Y"}[trunc]
+            return [
+                OrderPeriodStat(
+                    period=row.period.strftime(fmt),
+                    count=row.count,
+                    revenue=round(float(row.revenue), 2),
+                )
+                for row in rows
+            ]
+
+        by_day, by_month, by_year = (
+            await _grouped("day"),
+            await _grouped("month"),
+            await _grouped("year"),
+        )
+        # Totals from all-time data before slicing for display windows
+        total_orders = sum(s.count for s in by_year)
+        total_revenue = round(sum(s.revenue for s in by_year), 2)
+        return OrderAnalytics(
+            by_day=by_day[-30:],
+            by_month=by_month[-12:],
+            by_year=by_year,
+            total_orders=total_orders,
+            total_revenue=total_revenue,
+        )
 
     async def cancel_order(self, order_id: int, user_id: int) -> OrderResponse:
         result = await self.db.execute(

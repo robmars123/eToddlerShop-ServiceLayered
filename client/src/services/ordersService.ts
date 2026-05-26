@@ -50,6 +50,28 @@ export async function cancelOrder(orderId: number): Promise<OrderResponse> {
   return res.json() as Promise<OrderResponse>
 }
 
+export interface OrderPeriodStat {
+  period: string
+  count: number
+  revenue: number
+}
+
+export interface OrderAnalytics {
+  by_day: OrderPeriodStat[]
+  by_month: OrderPeriodStat[]
+  by_year: OrderPeriodStat[]
+  total_orders: number
+  total_revenue: number
+}
+
+export async function fetchOrderAnalytics(): Promise<OrderAnalytics> {
+  const res = await fetch(`${API_URL}/api/v1/orders/analytics`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error('Failed to load analytics')
+  return res.json() as Promise<OrderAnalytics>
+}
+
 export async function fetchMyOrders(): Promise<OrderResponse[]> {
   const res = await fetch(`${API_URL}/api/v1/orders/my`, {
     headers: { ...authHeaders() },
