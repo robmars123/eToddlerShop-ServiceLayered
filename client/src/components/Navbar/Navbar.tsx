@@ -11,10 +11,10 @@ interface NavLink {
 const NAV_LINKS: NavLink[] = [
   { label: 'Shop', to: '/' },
   { label: 'AI Search', to: '/recommend' },
-  { label: 'Best Sellers', to: '#' },
-  { label: 'Girl', to: '#' },
-  { label: 'Boy', to: '#' },
-  { label: 'Clearance', to: '#' },
+ // { label: 'Best Sellers', to: '#' },
+ // { label: 'Girl', to: '#' },
+ // { label: 'Boy', to: '#' },
+ // { label: 'Clearance', to: '#' },
 ]
 
 export function Navbar() {
@@ -54,12 +54,17 @@ export function Navbar() {
         {/* Right side: cart + auth */}
         <div className="flex items-center gap-4">
           {user ? (
-            <button
-              onClick={logout}
-              className="hidden md:block text-xs tracking-widest uppercase text-gray-500 hover:text-[#1A1A1A] transition-colors"
-            >
-              Sign out
-            </button>
+            <div className="hidden md:flex items-center gap-3">
+              <span className="text-xs tracking-widest uppercase text-[#1A1A1A] font-medium">
+                {user.username}
+              </span>
+              <button
+                onClick={logout}
+                className="text-xs tracking-widest uppercase text-gray-500 hover:text-[#1A1A1A] transition-colors"
+              >
+                Sign out
+              </button>
+            </div>
           ) : (
             <Link
               to="/login"
