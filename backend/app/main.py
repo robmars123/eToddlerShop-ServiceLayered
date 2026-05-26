@@ -4,6 +4,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
+import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -11,6 +12,16 @@ from sqlalchemy import select, text
 
 from app.database import Base, SessionLocal, engine, settings
 from app.routers import ai, auth, health, orders, products, users
+
+# Requests allowed per minute per IP, keyed by path prefix
+_RATE_LIMITS: list[tuple[str, int]] = [
+    ("/api/v1/ai",     20),   # AI endpoints are expensive
+    ("/api/v1/auth",   20),   # Brute-force protection
+    ("/api/v1/orders", 40),   # Order creation / listing
+    ("",              120),   # Everything else
+]
+
+_rate_redis: aioredis.Redis | None = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,7 +58,13 @@ async def lifespan(app: FastAPI):
         """))
 
     await _seed_admin()
+
+    global _rate_redis
+    _rate_redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+
     yield
+
+    await _rate_redis.aclose()
 
 
 async def _seed_admin() -> None:
@@ -81,6 +98,46 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    # Never rate-limit CORS preflight — OPTIONS must reach CORSMiddleware
+    if request.method == "OPTIONS" or _rate_redis is None:
+        return await call_next(request)
+
+    ip = request.client.host if request.client else "unknown"
+    path = request.url.path
+    origin = request.headers.get("origin", "")
+
+    limit = next(cap for prefix, cap in _RATE_LIMITS if path.startswith(prefix))
+    key = f"rl:{ip}:{path.split('/')[3] if path.startswith('/api/v1/') else 'global'}"
+
+    try:
+        async with _rate_redis.pipeline(transaction=False) as pipe:
+            pipe.incr(key)
+            pipe.expire(key, 60)
+            count, _ = await pipe.execute()
+
+        if count > limit:
+            logger.warning("Rate limit hit: ip=%s path=%s count=%d limit=%d", ip, path, count, limit)
+            # Mirror the origin so the browser doesn't treat this as a CORS failure
+            cors_headers = {"Access-Control-Allow-Origin": origin} if origin else {}
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Please slow down."},
+                headers={
+                    "Retry-After": "60",
+                    "X-RateLimit-Limit": str(limit),
+                    **cors_headers,
+                },
+            )
+    except Exception:
+        pass  # Redis unavailable — fail open rather than block legitimate traffic
+
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    return response
+
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):

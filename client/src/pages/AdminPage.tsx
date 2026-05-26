@@ -20,7 +20,7 @@ type Section = 'products' | 'analytics' | 'health'
 interface ServiceHealth { status: string; latency_ms?: number; error?: string }
 interface HealthData {
   status: string; timestamp: string; uptime_seconds: number; environment: string
-  services: { database: ServiceHealth; redis: ServiceHealth; storage: ServiceHealth }
+  services: Record<string, ServiceHealth & { uptime_seconds?: number }>
 }
 
 // ── Sidebar ────────────────────────────────────────────────────────────────────
@@ -110,7 +110,12 @@ function HealthSection() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setData(await res.json() as HealthData)
+      const health = await res.json() as HealthData
+      health.services = {
+        client:   { status: 'ok' },
+        ...health.services,
+      }
+      setData(health)
       setLastChecked(new Date())
     } catch (err) { setError((err as Error).message) }
     finally { setLoading(false) }
@@ -158,6 +163,7 @@ function HealthSection() {
               <div key={name} className="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
                 <span className="text-sm font-medium text-[#1A1A1A] capitalize">{name}</span>
                 <div className="flex items-center gap-4">
+                  {svc.uptime_seconds !== undefined && <span className="text-xs text-gray-400">up {formatUptime(svc.uptime_seconds)}</span>}
                   {svc.latency_ms !== undefined && <span className="text-xs text-gray-400">{svc.latency_ms} ms</span>}
                   {svc.error && <span className="text-xs text-red-500 max-w-[200px] truncate" title={svc.error}>{svc.error}</span>}
                   <StatusBadge status={svc.status} />
@@ -189,14 +195,17 @@ function StatCard({ label, value }: { label: string; value: string }) {
 
 function BarChart({ data, metric, range }: { data: OrderPeriodStat[]; metric: Metric; range: TimeRange }) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const max = Math.max(...data.map(d => metric === 'count' ? d.count : d.revenue), 1)
+  const rawMax = Math.max(...data.map(d => metric === 'count' ? d.count : d.revenue), 0)
 
+  // Build a clean integer scale with no duplicate tick labels
   const tickCount = 4
-  const ticks = Array.from({ length: tickCount + 1 }, (_, i) =>
-    metric === 'revenue'
-      ? `$${Math.round((max / tickCount) * i)}`
-      : String(Math.round((max / tickCount) * i))
-  ).reverse()
+  const step = Math.max(1, Math.ceil(rawMax / tickCount))
+  const axisMax = step * tickCount
+
+  const ticks = Array.from({ length: tickCount + 1 }, (_, i) => {
+    const val = axisMax - i * step
+    return metric === 'revenue' ? `$${val}` : String(val)
+  })
 
   const labelStep = data.length <= 12 ? 1 : data.length <= 31 ? 3 : Math.ceil(data.length / 8)
 
@@ -222,13 +231,13 @@ function BarChart({ data, metric, range }: { data: OrderPeriodStat[]; metric: Me
           <div className="absolute inset-0 flex items-end gap-0.5">
             {data.map((item, i) => {
               const val = metric === 'count' ? item.count : item.revenue
-              const pct = max > 0 ? (val / max) * 100 : 0
+              const pct = axisMax > 0 ? (val / axisMax) * 100 : 0
               const isHovered = hoveredIdx === i
               const isCurrent = isCurrentPeriod(item.period, range)
-              const color = isCurrent
-                ? '#D4513A'
-                : metric === 'count' ? '#1A1A1A' : '#D4513A'
-              const hoverColor = isCurrent ? '#c04030' : metric === 'count' ? '#444' : '#c04030'
+              const color = metric === 'count'
+                ? (isCurrent ? '#15803d' : '#16a34a')
+                : (isCurrent ? '#b84530' : '#D4513A')
+              const hoverColor = metric === 'count' ? '#15803d' : '#b84530'
 
               return (
                 <div
