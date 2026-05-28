@@ -13,6 +13,16 @@ export async function fetchProducts(): Promise<Product[]> {
   return res.json() as Promise<Product[]>
 }
 
+export async function fetchProductsByIds(ids: number[]): Promise<Product[]> {
+  const res = await fetch(`${API_URL}/api/v1/products/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw new Error('Failed to fetch products')
+  return res.json() as Promise<Product[]>
+}
+
 export async function fetchProduct(id: number): Promise<Product> {
   const res = await fetch(`${API_URL}/api/v1/products/${id}`)
   if (!res.ok) throw new Error('Product not found')

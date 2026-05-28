@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { recommendProducts, type RecommendResult } from '../../../services/aiService'
-import { fetchProducts } from '../../../services/productsService'
+import { fetchProductsByIds } from '../../../services/productsService'
 import type { Product } from '../../../types'
 
 export type SortOption = 'relevance' | 'price_asc' | 'price_desc'
@@ -24,15 +24,11 @@ export function useRecommend() {
     setRankedProducts([])
     setSort('relevance')
     try {
-      const [recommend, allProducts] = await Promise.all([
-        recommendProducts(text),
-        fetchProducts(),
-      ])
+      const recommend = await recommendProducts(text)
       setResult(recommend)
-      const productMap = new Map(allProducts.map(p => [p.id, p]))
-      const ranked = recommend.ranked_product_ids
-        .map(id => productMap.get(id))
-        .filter((p): p is Product => p !== undefined)
+      const ranked = recommend.ranked_product_ids.length > 0
+        ? await fetchProductsByIds(recommend.ranked_product_ids)
+        : []
       setRankedProducts(ranked)
     } catch {
       setError('Something went wrong. Please try again.')

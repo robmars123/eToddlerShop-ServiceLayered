@@ -1,236 +1,170 @@
-╔══════════════════════════════════════════════════════════════════════════╗
-  ║                          WEB APP ENTRY                                   ║
-  ║                    User opens browser → React SPA                        ║
-  ╚══════════════════════════════════════════════════════════════════════════╝
-                                      │
-                ┌─────────────────────┼─────────────────────┐
-                ▼                     ▼                     ▼
-         /  Products           /recommend              /admin
-         (browse shop)       AI Search Page          Admin Panel
-                                                          │
-                                            ┌─────────────┘
-                                            ▼
-                                ┌───────────────────────┐
-                                │  [Embed Products]     │  (one-time / on-demand)
-                                │  POST /ai/embed-      │
-                                │  products (admin only)│
-                                └───────────┬───────────┘
-                                            │
-                                For each product in DB:
-                                            │
-                                ┌───────────▼───────────┐
-                                │  Build text string:   │
-                                │  "{name}. {desc}.     │
-                                │   Price: ${price}"    │
-                                └───────────┬───────────┘
-                                            │
-                                ┌───────────▼────────────────────────┐
-                                │  Azure OpenAI Embeddings           │
-                                │  Model: text-embedding-3-small     │
-                                │  Input : product text string       │
-                                │  Output: float[1536] vector        │
-                                └───────────┬────────────────────────┘
-                                            │
-                                ┌───────────▼───────────┐
-                                │  PostgreSQL + pgvector │
-                                │  table: product_       │
-                                │  embeddings            │
-                                │  (upsert per product)  │
-                                └───────────────────────┘
+  ══════════════════════════════════════════════════════════════════════════
+    APP ENTRY
+  ══════════════════════════════════════════════════════════════════════════
+
+  User opens browser → React SPA loads → Microsoft Entra login popup
+  After sign-in, every API request carries the Entra token in the header.
+  FastAPI validates the token on each request before doing anything.
+
+                              │
+            ┌─────────────────┼──────────────────┐
+            ▼                 ▼                  ▼
+       /products          /recommend           /admin
+      (browse shop)      (AI search)        (admin panel)
 
 
   ══════════════════════════════════════════════════════════════════════════
-    ADMIN FLOW — Product Image Upload
+    HOW THE AI WORKS — Overview
   ══════════════════════════════════════════════════════════════════════════
 
-    ┌──────────────────────────────────────────┐
-    │  Admin uploads image in Admin Panel      │
-    │  POST /products/{id}/image               │
-    └──────────────────┬───────────────────────┘
-                       │
-    ┌──────────────────▼───────────────────────┐
-    │  ProductService.upload_image()           │
-    │  Generates unique blob name:             │
-    │  "{product_id}_{uuid}.{ext}"             │
-    └──────────────────┬───────────────────────┘
-                       │
-    ┌──────────────────▼───────────────────────┐
-    │  Azure Blob Storage                      │
-    │  Container: products                     │
-    │  Uploads image bytes with ContentType    │
-    │  Generates 10-year SAS read URL          │
-    └──────────────────┬───────────────────────┘
-                       │
-    ┌──────────────────▼───────────────────────┐
-    │  Saves SAS URL → products.image_url      │
-    │  (PostgreSQL)                            │
-    │  Old blob deleted if replacing image     │
-    └──────────────────────────────────────────┘
+  There are two AI features: AI Search and Chat Assistant.
+  Both rely on the same idea: products are converted into vectors (numbers
+  that represent meaning) so the app can find relevant items by meaning,
+  not just keyword matching.
+
+  Before either feature works, an admin must index the products once:
+
+    Admin clicks "Index Products" in the Admin Panel
+      → Each product's name, description and price are sent to Azure OpenAI
+      → Azure OpenAI returns a vector (1536 numbers) representing that product
+      → Vector is stored in PostgreSQL alongside the product
+
+  That's the setup step. Everything below uses those stored vectors.
 
 
   ══════════════════════════════════════════════════════════════════════════
-    USER FLOW A — AI Search  (/recommend)
+    AI FEATURE 1 — AI Search  (/recommend)
   ══════════════════════════════════════════════════════════════════════════
 
-    ┌──────────────────────────────────┐
-    │  User types query                │   e.g. "toys for girls under $20"
-    │  — OR —                          │
-    │  User clicks 🎤 mic button       │
-    └──────────────┬───────────────────┘
-                   │
-          [if voice input]
-                   │
-    ┌──────────────▼───────────────────┐
-    │  GET /ai/speech-token            │
-    │  Backend calls Azure Speech STS: │
-    │  POST /sts/v1.0/issueToken       │
-    │  Output: short-lived auth token  │  (key never exposed to browser)
-    └──────────────┬───────────────────┘
-                   │
-    ┌──────────────▼───────────────────┐
-    │  Azure Speech SDK (in browser)   │
-    │  Service: Azure Speech Service   │
-    │  Endpoint: centralus.cognitive.. │
-    │  Input : microphone audio stream │
-    │  Output: transcript text string  │
-    └──────────────┬───────────────────┘
-                   │
-                   │  transcript auto-fills search box
-                   │  + immediately fires search
-                   │
-    ┌──────────────▼────────────────────────────────────────────┐
-    │  POST /ai/recommend  { message: "toys for girls under $20" }
-    └──────────────┬────────────────────────────────────────────┘
-                   │
-                   │
-    ── PHASE 1: Filter Extraction ──────────────────────────────
-                   │
-    ┌──────────────▼───────────────────────────────────────────┐
-    │  Azure OpenAI Chat (gpt-4o-mini)                         │
-    │  mode: JSON  temp: 0.1                                   │
-    │  system: "extract structured filters from query"         │
-    │  user  : "toys for girls under $20"                      │
-    │                                                          │
-    │  Output JSON:                                            │
-    │  { "query": "toys for girls",                            │
-    │    "filters": { "price_max": 20, "category": "", ... } } │
-    └──────────────┬───────────────────────────────────────────┘
-                   │
-    ── PHASE 2: Vector Search ──────────────────────────────────
-                   │
-    ┌──────────────▼───────────────────────────────────────────┐
-    │  Azure OpenAI Embeddings (text-embedding-3-small)        │
-    │  Input : original message (full query, not filtered)     │
-    │  Output: float[1536] query vector                        │
-    └──────────────┬───────────────────────────────────────────┘
-                   │
-    ┌──────────────▼───────────────────────────────────────────┐
-    │  pgvector cosine distance search                         │
-    │  max_distance: 0.75 (no price filter)                    │
-    │               0.90 (price filter present — wider net)    │
-    │  ORDER BY distance  LIMIT 50                             │
-    │                                                          │
-    │  → apply hard price filters from Phase 1 in Python       │
-    │  Output: list of candidate ProductEmbedding objects      │
-    └──────────────┬───────────────────────────────────────────┘
-                   │
-    ── PHASE 3: AI Re-Ranking ──────────────────────────────────
-                   │
-    ┌──────────────▼───────────────────────────────────────────┐
-    │  Azure OpenAI Chat (gpt-4o-mini)                         │
-    │  mode: JSON  temp: 0.1                                   │
-    │  system: "rank products by relevance to query"           │
-    │  user  : original message + candidate product list       │
-    │                                                          │
-    │  Output JSON:  { "rankedProductIds": [42, 7, 19, ...] }  │
-    └──────────────┬───────────────────────────────────────────┘
-                   │
-    ┌──────────────▼───────────────────────────────────────────┐
-    │  Frontend maps ranked IDs → full Product objects         │
-    │  (from GET /products fetched in parallel)                │
-    │  Renders ProductCard grid in ranked order                │
-    │  Product images served from Azure Blob SAS URLs          │
-    └──────────────────────────────────────────────────────────┘
+  User types (or speaks) a query like "toys for girls under $20"
+
+  The backend runs three steps:
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  STEP 1 — Understand the query                              │
+  │                                                             │
+  │  GPT-4o-mini reads the query and extracts:                  │
+  │  - the core search term  ("toys for girls")                 │
+  │  - any price limits      (max $20)                          │
+  └─────────────────────────────┬───────────────────────────────┘
+                                │
+  ┌─────────────────────────────▼───────────────────────────────┐
+  │  STEP 2 — Find similar products                             │
+  │                                                             │
+  │  The query is converted to a vector, then compared against  │
+  │  all product vectors in the database.                       │
+  │  Products with similar meaning bubble up. Price filters     │
+  │  from Step 1 are applied to narrow the list further.        │
+  └─────────────────────────────┬───────────────────────────────┘
+                                │
+  ┌─────────────────────────────▼───────────────────────────────┐
+  │  STEP 3 — Pick the best matches                             │
+  │                                                             │
+  │  GPT-4o-mini looks at the shortlist and ranks products      │
+  │  by how well they actually match what the user asked for.   │
+  │  Returns a ranked list of product IDs.                      │
+  └─────────────────────────────┬───────────────────────────────┘
+                                │
+                    Results displayed as product cards
+                    in ranked order on the page.
+
+  Results are cached for 5 minutes — the same query won't
+  hit Azure OpenAI twice within that window.
 
 
   ══════════════════════════════════════════════════════════════════════════
-    USER FLOW B — Chat Widget  (floating button, any page)
+    AI FEATURE 2 — Chat Assistant  (floating widget, any page)
   ══════════════════════════════════════════════════════════════════════════
 
-    ┌─────────────────────────────────┐
-    │  User types message in widget   │   e.g. "what's good for a 3 year old?"
-    └─────────────────┬───────────────┘
-                      │
-    ┌─────────────────▼──────────────────────────────────────┐
-    │  POST /ai/chat  { message: "what's good for a 3 year old?" }
-    └─────────────────┬──────────────────────────────────────┘
-                      │
-    ┌─────────────────▼──────────────────────────────────────┐
-    │  Azure OpenAI Embeddings (text-embedding-3-small)      │
-    │  Input : user message                                  │
-    │  Output: float[1536] query vector                      │
-    └─────────────────┬──────────────────────────────────────┘
-                      │
-    ┌─────────────────▼──────────────────────────────────────┐
-    │  pgvector cosine search                                │
-    │  top_k=5  max_distance=0.70                            │
-    │  Output: 5 most relevant ProductEmbedding objects      │
-    └─────────────────┬──────────────────────────────────────┘
-                      │
-    ┌─────────────────▼──────────────────────────────────────┐
-    │  Build RAG context string from the 5 products          │
-    │  "- {name}: {desc}. Price: ${price}"  × 5             │
-    └─────────────────┬──────────────────────────────────────┘
-                      │
-    ┌─────────────────▼──────────────────────────────────────┐
-    │  Azure OpenAI Chat (gpt-4o-mini)                       │
-    │  mode: plain text  temp: 0.7                           │
-    │  system: "You are a shopping assistant.                │
-    │           Use ONLY these products: {context}"          │
-    │  user  : original message                              │
-    │                                                        │
-    │  Output: friendly natural language reply               │
-    └─────────────────┬──────────────────────────────────────┘
-                      │
-    ┌─────────────────▼──────────────────────────────────────┐
-    │  Displayed as assistant bubble in ChatWidget           │
-    └────────────────────────────────────────────────────────┘
+  User types "what's good for a 3 year old?"
 
-  ---
-  Azure services used and their roles
+  ┌─────────────────────────────────────────────────────────────┐
+  │  Find relevant products                                     │
+  │                                                             │
+  │  The message is converted to a vector and the 5 closest     │
+  │  products in the database are retrieved.                    │
+  └─────────────────────────────┬───────────────────────────────┘
+                                │
+  ┌─────────────────────────────▼───────────────────────────────┐
+  │  Generate a grounded reply                                  │
+  │                                                             │
+  │  Those 5 products are given to GPT-4o-mini as context.      │
+  │  GPT can only answer using those products — it cannot        │
+  │  make up products or go off-topic.                          │
+  │                                                             │
+  │  Output: a friendly, natural language shopping suggestion.  │
+  └─────────────────────────────────────────────────────────────┘
 
-  ┌─────────────────────────┬────────────────────────┬─────────────────────────────────────────────────────┐
-  │         Service         │         Model          │                     Called for                      │
-  ├─────────────────────────┼────────────────────────┼─────────────────────────────────────────────────────┤
-  │ Azure Speech Service    │ STT (centralus)        │ Mic audio → transcript text                         │
-  ├─────────────────────────┼────────────────────────┼─────────────────────────────────────────────────────┤
-  │ Azure OpenAI Embeddings │ text-embedding-3-small │ Text → 1536-dim vector (indexing + search + chat)   │
-  ├─────────────────────────┼────────────────────────┼─────────────────────────────────────────────────────┤
-  │ Azure OpenAI Chat       │ gpt-4o-mini            │ Filter extraction, product re-ranking, chat replies │
-  ├─────────────────────────┼────────────────────────┼─────────────────────────────────────────────────────┤
-  │ Azure Blob Storage      │ —                      │ Product image upload, storage, and SAS URL serving  │
-  ├─────────────────────────┼────────────────────────┼─────────────────────────────────────────────────────┤
-  │ PostgreSQL + pgvector   │ —                      │ Stores rows, vectors, image URLs; cosine search     │
-  └─────────────────────────┴────────────────────────┴─────────────────────────────────────────────────────┘
+  Key difference from AI Search: Chat gives a conversational answer.
+  AI Search returns a product grid you can click and buy from.
 
-  ---
-  Deployment stack
 
-  ┌─────────────────────────┬────────────────────────────────────────────────────────────────┐
-  │       Component         │                         Detail                                 │
-  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
-  │ Frontend                │ Azure Static Web App  (React SPA, built in CI)                 │
-  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
-  │ Backend                 │ Azure App Service (Linux, Web App for Containers, B2 plan)     │
-  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
-  │ Container registry      │ GitHub Container Registry (ghcr.io) — free, replaces ACR       │
-  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
-  │ Database                │ Azure Database for PostgreSQL Flexible Server (pgvector enabled)│
-  ├─────────────────────────┼────────────────────────────────────────────────────────────────┤
-  │ CI/CD                   │ GitHub Actions → build image → push ghcr.io → deploy           │
-  └─────────────────────────┴────────────────────────────────────────────────────────────────┘
+  ══════════════════════════════════════════════════════════════════════════
+    VOICE INPUT  (AI Search only)
+  ══════════════════════════════════════════════════════════════════════════
+
+  User clicks the mic button instead of typing.
+
+  The backend issues a short-lived Azure Speech token (the actual key
+  never leaves the server). The browser uses that token to stream mic
+  audio directly to Azure Speech Service, which returns a transcript.
+  The transcript fills the search box and the search fires automatically.
+
+
+  ══════════════════════════════════════════════════════════════════════════
+    PRODUCT IMAGE UPLOAD  (admin only)
+  ══════════════════════════════════════════════════════════════════════════
+
+  Admin uploads an image in the Admin Panel
+    → Image is uploaded to Azure Blob Storage
+    → A long-lived read URL (SAS URL) is generated and saved to the database
+    → That URL is what the frontend loads when showing product images
+    → Old image blob is deleted automatically when replaced
+
+
+  ══════════════════════════════════════════════════════════════════════════
+    AZURE SERVICES USED
+  ══════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────┬────────────────────────┬──────────────────────────────────────┐
+  │ Service                 │ Model                  │ Used for                             │
+  ├─────────────────────────┼────────────────────────┼──────────────────────────────────────┤
+  │ Azure Entra External ID │ —                      │ User authentication (CIAM)           │
+  ├─────────────────────────┼────────────────────────┼──────────────────────────────────────┤
+  │ Azure OpenAI Embeddings │ text-embedding-3-small │ Convert text to vectors              │
+  ├─────────────────────────┼────────────────────────┼──────────────────────────────────────┤
+  │ Azure OpenAI Chat       │ gpt-4o-mini            │ Filter extraction, ranking, chat     │
+  ├─────────────────────────┼────────────────────────┼──────────────────────────────────────┤
+  │ Azure Speech Service    │ STT (centralus)        │ Mic audio → transcript text          │
+  ├─────────────────────────┼────────────────────────┼──────────────────────────────────────┤
+  │ Azure Blob Storage      │ —                      │ Product image storage + SAS URLs     │
+  ├─────────────────────────┼────────────────────────┼──────────────────────────────────────┤
+  │ PostgreSQL + pgvector   │ —                      │ Data storage + vector similarity search│
+  └─────────────────────────┴────────────────────────┴──────────────────────────────────────┘
+
+
+  ══════════════════════════════════════════════════════════════════════════
+    DEPLOYMENT STACK
+  ══════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────┬──────────────────────────────────────────────┐
+  │ Component               │ Detail                                       │
+  ├─────────────────────────┼──────────────────────────────────────────────┤
+  │ Frontend                │ React SPA served by nginx (Docker container) │
+  ├─────────────────────────┼──────────────────────────────────────────────┤
+  │ Backend                 │ Azure App Service (Linux, B1, container)     │
+  ├─────────────────────────┼──────────────────────────────────────────────┤
+  │ Container registry      │ GitHub Container Registry (ghcr.io)          │
+  ├─────────────────────────┼──────────────────────────────────────────────┤
+  │ Database                │ PostgreSQL with pgvector (Neon free tier)    │
+  ├─────────────────────────┼──────────────────────────────────────────────┤
+  │ Cache / Rate limiting   │ Redis (Upstash free tier)                    │
+  ├─────────────────────────┼──────────────────────────────────────────────┤
+  │ CI/CD                   │ GitHub Actions: test → build → push → deploy │
+  └─────────────────────────┴──────────────────────────────────────────────┘
 
   Local development: docker compose up --build
-    db  → pgvector/pgvector:pg16 (local named volume, no cloud connection)
-    api → FastAPI container (reads .env for Azure credentials)
-    client → nginx serving React build (hits localhost:8000)
+    db     → PostgreSQL + pgvector (local volume)
+    redis  → Redis
+    api    → FastAPI (reads backend/.env for Azure credentials)
+    client → nginx serving the React build (proxies API to localhost:8000)

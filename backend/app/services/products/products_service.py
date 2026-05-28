@@ -69,6 +69,11 @@ class ProductService:
         await _cache_set(_PRODUCTS_KEY, json.dumps([p.model_dump() for p in products]), ex=_PRODUCTS_TTL)
         return products
 
+    async def get_products_by_ids(self, ids: list[int]) -> list[ProductResponse]:
+        result = await self.db.execute(select(Product).where(Product.id.in_(ids)))
+        product_map = {p.id: ProductResponse.model_validate(p) for p in result.scalars().all()}
+        return [product_map[i] for i in ids if i in product_map]
+
     async def get_product(self, product_id: int) -> ProductResponse:
         product = await self.db.get(Product, product_id)
         if product is None:

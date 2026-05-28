@@ -151,6 +151,7 @@ Base path: `/api/v1` — interactive docs at `http://localhost:8000/docs`
 |---|---|---|---|
 | `GET` | `/products/` | — | List all products (Redis-cached) |
 | `GET` | `/products/{id}` | — | Get a product |
+| `POST` | `/products/batch` | — | Fetch up to 100 products by ID list (used by AI search) |
 | `POST` | `/products/` | Admin | Create a product |
 | `PUT` | `/products/{id}` | Admin | Update a product |
 | `DELETE` | `/products/{id}` | Admin | Delete product + Azure blob |
@@ -199,6 +200,94 @@ Sample response:
   }
 }
 ```
+
+## AI Features
+
+### Prerequisites
+
+Before AI search or the chatbot can return results, an admin must run the embedding step from the Admin dashboard. This calls `POST /ai/embed-products`, which reads every product from the database, generates a vector with `text-embedding-3-small`, and upserts it into the `product_embeddings` table (pgvector). From that point on, individual product embeddings are kept in sync automatically — create/update/delete each trigger a background task that re-embeds or removes the affected row.
+
+---
+
+### AI Search — step by step
+
+The AI search is a 3-phase pipeline that runs entirely server-side. The frontend only sends the raw query and receives ranked product IDs back.
+
+**1. User submits a query**
+`RecommendPage` calls `POST /api/v1/ai/recommend` with `{ "message": "toys for girls under $20" }`.
+
+**2. Redis cache check**
+`RecommendService.recommend()` hashes the message and checks Redis. A cache hit returns the previous result immediately (TTL: 5 minutes). Cache is invalidated on any product create, update, or delete.
+
+**3. Filter extraction**
+`_extract_filters()` sends the raw message to GPT-4o-mini with a structured prompt. The model returns JSON containing:
+- `query` — the semantic phrase with all concepts preserved but price/numeric constraints removed
+- `filters` — structured fields: `category`, `age`, `price_exact`, `price_min`, `price_max`, `price_above`, `price_below`, `tags`
+
+**4. Vector search**
+`_vector_search()` embeds the cleaned `query` using `text-embedding-3-small` (Redis-cached per text for 30 days), then runs a cosine distance query against `product_embeddings` via pgvector. Returns up to 50 candidates ordered by similarity. Pure price queries (empty semantic query) skip the distance threshold so all products reach the price filter step.
+
+**5. Price filtering**
+`_apply_price_filters()` applies the extracted price constraints in Python, narrowing the candidate list to only products that satisfy all numeric conditions.
+
+**6. Re-ranking**
+`_rerank()` sends the shortlist to GPT-4o-mini with the original user message and asks it to rank by relevance and exclude irrelevant products. Returns an ordered list of product IDs. When a price filter was active, any price-matching product excluded by the re-ranker is appended at the end to guarantee completeness.
+
+**7. Response cached and returned**
+The `RecommendResponse` (`{ ranked_product_ids, query, filters }`) is stored in Redis and returned to the frontend.
+
+**8. Batch product fetch**
+The frontend calls `POST /api/v1/products/batch` with the ranked ID list (max 100). The backend executes a single `SELECT … WHERE id IN (…)` and returns only those product rows in ranked order. No full table scan occurs.
+
+---
+
+### Chatbot — step by step
+
+The chatbot reuses the same recommendation pipeline internally, then grounds GPT-4o-mini on the results before streaming a response.
+
+**1. User sends a message**
+`ChatWidget` calls `POST /api/v1/ai/chat/stream` with `{ "message": "..." }`. The response is an SSE stream.
+
+**2. Context building**
+`ChatService._build_context()` runs the full AI search pipeline above (steps 2–7) on the user's message. It then fetches the full `Product` rows for the top 10 ranked IDs from the `products` table.
+
+- If the query is broad (e.g. "show me everything") and returns no ranked IDs, the service checks whether any embeddings exist and falls back to `SELECT … LIMIT 10`.
+- If no embeddings exist at all, `_build_context()` returns `None` and the response is a "please ask an admin to index first" message.
+
+**3. Prompt assembly**
+A system prompt is built from the product context:
+```
+You are a helpful shopping assistant. Answer ONLY using the products listed below. ...
+Available products:
+- Product A: description. Price: $X.XX
+- Product B: ...
+```
+
+**4. Streaming response**
+GPT-4o-mini streams its reply. Each chunk is serialised as `data: {"delta": "..."}` and flushed immediately. The final frame is `data: [DONE]`.
+
+**5. Frontend rendering**
+`useChat` receives chunks via the `onChunk` callback. The first chunk creates a new assistant message bubble; subsequent chunks are appended character-by-character to the last message. The chat widget auto-scrolls to the bottom.
+
+---
+
+### Voice Search — step by step
+
+Voice search is available on both the AI Search page and inside the chatbot. The subscription key never leaves the server.
+
+**1. User clicks the microphone button**
+`useSpeech.startListening()` is called.
+
+**2. Token exchange**
+`recognizeSpeech()` calls `GET /api/v1/ai/speech-token`. The backend `SpeechService` posts to the Azure Cognitive Services token endpoint using the server-side subscription key and returns a short-lived bearer token and the configured region.
+
+**3. Speech recognition**
+The frontend initialises an Azure Speech SDK `SpeechRecognizer` with the token and records from the default microphone. `recognizeOnceAsync()` waits for a complete utterance, then closes the recognizer and resolves with the transcribed text.
+
+**4. Query handoff**
+`useSpeech` calls the `onResult(text)` callback with the transcribed text.
+- On `RecommendPage`: the query input is set to the transcribed text and `search(text)` is called immediately, entering the AI Search pipeline at step 1 above.
+- In the chatbot: the input field is populated and `send()` is called, entering the chatbot pipeline at step 1 above.
 
 ## Tests
 

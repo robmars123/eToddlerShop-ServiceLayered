@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.auth_schema import TokenData
-from app.schemas.product_schema import ProductCreate, ProductResponse, ProductUpdate
+from app.schemas.product_schema import ProductBatchRequest, ProductCreate, ProductResponse, ProductUpdate
 from app.services.auth.auth_service import require_admin
 from app.services.ai.embedding_service import EmbeddingService
 from app.services.products.products_service import ProductService
@@ -35,6 +35,14 @@ def get_recommend_service(
 @router.get("/", response_model=list[ProductResponse])
 async def list_products(service: Annotated[ProductService, Depends(get_product_service)]):
     return await service.list_products()
+
+
+@router.post("/batch", response_model=list[ProductResponse])
+async def get_products_batch(
+    data: ProductBatchRequest,
+    service: Annotated[ProductService, Depends(get_product_service)],
+):
+    return await service.get_products_by_ids(data.ids)
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
