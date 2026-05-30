@@ -1,14 +1,35 @@
 import { useState, useRef, useEffect } from 'react'
-import { streamChatMessage } from '../services/chatService'
+import { fetchChatHistory, streamChatMessage } from '../services/chatService'
 import { MessageRole, type ChatMessage } from '../types'
+import { useAuth } from '../../Auth/AuthContext'
+
+// Guest session persists across page refreshes; replaced on login by user-scoped key.
+function getOrCreateGuestSessionId(): string {
+  const key = 'guest_chat_session'
+  const existing = localStorage.getItem(key)
+  if (existing) return existing
+  const id = crypto.randomUUID()
+  localStorage.setItem(key, id)
+  return id
+}
 
 export function useChat() {
+  const { user } = useAuth()
+
+  // Logged-in users are keyed by their DB id; guests get a stable localStorage UUID.
+  const sessionId = user ? `user-${user.id}` : getOrCreateGuestSessionId()
+
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)   // true while waiting for first chunk
   const [streaming, setStreaming] = useState(false) // true while chunks are arriving
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // Restore conversation from Redis on mount.
+  useEffect(() => {
+    fetchChatHistory(sessionId).then(setMessages)
+  }, [sessionId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -26,7 +47,7 @@ export function useChat() {
     let firstChunk = true
 
     try {
-      await streamChatMessage(text, (chunk) => {
+      await streamChatMessage(text, sessionId, (chunk) => {
         if (firstChunk) {
           firstChunk = false
           setLoading(false)

@@ -9,7 +9,8 @@ FastAPI backend with a domain-organised service layer, Azure Entra External ID a
 - **SQLAlchemy 2 (async)** + **asyncpg** — database access
 - **PostgreSQL** + **pgvector** — database with vector search
 - **Pydantic v2** — schemas and settings
-- **Redis** (optional) — product list cache + rate limiting; fails open when unavailable
+- **Redis** (optional) — product list cache, rate limiting, and chat history; fails open when unavailable
+- **LangChain** (`langchain-core`, `langchain-openai`) — AI orchestration tier; chat prompt chaining and Redis-backed conversation history
 - **Azure Entra External ID** — CIAM authentication, RS256 JWKS token validation
 - **Azure OpenAI** — embeddings (text-embedding-3-small) and chat completions (GPT-4o-mini)
 - **Azure Cognitive Services Speech** — speech-to-text token issuance
@@ -41,11 +42,14 @@ app/
 │   │   ├── auth_service.py         # get_current_user, require_admin, user upsert
 │   │   └── entra_token_validator.py# JWKS fetch + RS256 JWT validation
 │   ├── ai/
-│   │   ├── _clients.py             # Shared Azure OpenAI async client instances
-│   │   ├── chat_service.py         # RAG chatbot (product catalog grounding)
+│   │   ├── _clients.py             # Shared Azure OpenAI + LangChain LLM client instances
+│   │   ├── chat_service.py         # RAG context builder (product catalog grounding)
 │   │   ├── embedding_service.py    # Bulk embed + pgvector upsert
 │   │   ├── recommend_service.py    # 3-phase: filter extract → vector search → re-rank
-│   │   └── speech_service.py       # Azure Speech token issuance
+│   │   ├── speech_service.py       # Azure Speech token issuance
+│   │   └── orchestrator/
+│   │       ├── history_repository.py  # HistoryRepository protocol + RedisHistoryRepository
+│   │       └── chat_orchestrator.py   # LangChain chain: context → prompt → LLM → history
 │   ├── orders/
 │   │   └── orders_service.py       # CRUD, analytics (day/month/year), cancel
 │   ├── products/
@@ -66,8 +70,12 @@ app/
 
 ```
 Router → Service(db) → SQLAlchemy AsyncSession → PostgreSQL
-                     ↘ Redis (cache / rate limit)
+                     ↘ Redis (cache / rate limit / chat history)
                      ↘ Azure services (OpenAI, Speech, Blob)
+
+Router → ChatOrchestrator → ChatService.build_context() → RecommendService → pgvector
+                          → HistoryRepository (Redis) → RedisChatMessageHistory
+                          → LangChain chain (prompt | AzureChatOpenAI | StrOutputParser)
 ```
 
 Each router gets a service instance via `Depends(get_db)`. No repository interfaces.
@@ -176,7 +184,8 @@ Base path: `/api/v1` — interactive docs at `http://localhost:8000/docs`
 |---|---|---|---|
 | `POST` | `/ai/embed-products` | Admin | Bulk index all products into vector store |
 | `POST` | `/ai/recommend` | — | AI product recommendations (3-phase pipeline) |
-| `POST` | `/ai/chat` | — | RAG-based shopping assistant |
+| `POST` | `/ai/chat` | — | RAG-based shopping assistant (with conversation history) |
+| `POST` | `/ai/chat/stream` | — | Same as above, streamed as SSE |
 | `GET` | `/ai/speech-token` | — | Issue short-lived Azure Speech token |
 
 ### Health
@@ -243,31 +252,41 @@ The frontend calls `POST /api/v1/products/batch` with the ranked ID list (max 10
 
 ### Chatbot — step by step
 
-The chatbot reuses the same recommendation pipeline internally, then grounds GPT-4o-mini on the results before streaming a response.
+The chatbot runs through a LangChain orchestration tier that adds Redis-backed conversation history on top of the same RAG recommendation pipeline.
 
 **1. User sends a message**
-`ChatWidget` calls `POST /api/v1/ai/chat/stream` with `{ "message": "..." }`. The response is an SSE stream.
+`ChatWidget` calls `POST /api/v1/ai/chat/stream` with `{ "message": "...", "session_id": "..." }`. The response is an SSE stream.
+
+The `session_id` determines which Redis history key is used:
+- **Logged-in user** — the React client sends `user-{id}` (e.g. `user-42`), derived from the authenticated user's DB id. History is consistent across all their sessions.
+- **Guest** — the React client generates a UUID on first visit, stores it in `localStorage` as `guest_chat_session`, and reuses it. History survives page refreshes for that browser.
+- **Omitted / null** — the orchestrator generates a throwaway UUID; the call is effectively stateless.
 
 **2. Context building**
-`ChatService._build_context()` runs the full AI search pipeline above (steps 2–7) on the user's message. It then fetches the full `Product` rows for the top 10 ranked IDs from the `products` table.
+`ChatService.build_context()` runs the full AI search pipeline (steps 2–7 above) on the user's message. It then fetches the full `Product` rows for the top 10 ranked IDs from the `products` table.
 
 - If the query is broad (e.g. "show me everything") and returns no ranked IDs, the service checks whether any embeddings exist and falls back to `SELECT … LIMIT 10`.
-- If no embeddings exist at all, `_build_context()` returns `None` and the response is a "please ask an admin to index first" message.
+- If no embeddings exist at all, `build_context()` returns `None` and the response is a "please ask an admin to index first" message.
 
-**3. Prompt assembly**
-A system prompt is built from the product context:
+**3. Prompt assembly with history**
+`ChatOrchestrator` passes the context into a `ChatPromptTemplate`:
 ```
-You are a helpful shopping assistant. Answer ONLY using the products listed below. ...
-Available products:
-- Product A: description. Price: $X.XX
-- Product B: ...
+[system]  You are a helpful shopping assistant. Answer ONLY using the products listed below. ...
+          Available products:
+          - Product A: description. Price: $X.XX
+          - ...
+[history] <previous turns loaded from Redis for this session_id>
+[human]   <current message>
 ```
+`RunnableWithMessageHistory` loads the session's prior turns from Redis, injects them into the `{history}` placeholder, and saves the new turn after the response completes.
 
 **4. Streaming response**
-GPT-4o-mini streams its reply. Each chunk is serialised as `data: {"delta": "..."}` and flushed immediately. The final frame is `data: [DONE]`.
+GPT-4o-mini streams its reply via `LangChain.astream()`. Each chunk is serialised as `data: {"delta": "..."}` and flushed immediately. The final frame is `data: [DONE]`. LangChain saves the complete response to Redis history after streaming finishes.
 
 **5. Frontend rendering**
 `useChat` receives chunks via the `onChunk` callback. The first chunk creates a new assistant message bubble; subsequent chunks are appended character-by-character to the last message. The chat widget auto-scrolls to the bottom.
+
+**Chat history TTL:** 1 hour (`chat_history:` Redis key prefix). Automatically expires after an idle session.
 
 ---
 

@@ -3,6 +3,17 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
+    # Client-supplied ID ties turns into a conversation; omit for stateless one-shot calls.
+    session_id: str | None = Field(default=None, max_length=128)
+
+
+class ChatHistoryMessage(BaseModel):
+    role: str   # "user" | "assistant"
+    content: str
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[ChatHistoryMessage]
 
 
 class ChatResponse(BaseModel):

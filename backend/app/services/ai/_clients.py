@@ -5,6 +5,7 @@
 import hashlib
 
 import redis.asyncio as aioredis
+from langchain_openai import AzureChatOpenAI
 from openai import AsyncAzureOpenAI
 
 from app.database import settings
@@ -19,6 +20,17 @@ openai_client: AsyncAzureOpenAI = AsyncAzureOpenAI(
     azure_endpoint=settings.azure_openai_endpoint,
     api_key=settings.azure_openai_key,
     api_version=settings.azure_openai_api_version,
+)
+
+# LangChain wrapper used by ChatOrchestrator — separate from openai_client
+# because LangChain chains require its own runnable interface.
+langchain_llm: AzureChatOpenAI = AzureChatOpenAI(
+    azure_endpoint=settings.azure_openai_endpoint,
+    api_key=settings.azure_openai_key,
+    api_version=settings.azure_openai_api_version,
+    azure_deployment=settings.azure_openai_chat,
+    temperature=0.7,
+    max_tokens=500,
 )
 
 EMBED_TTL = 60 * 60 * 24 * 30  # 30 days

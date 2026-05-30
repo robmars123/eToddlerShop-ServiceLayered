@@ -35,7 +35,15 @@
       "PowerShell(Get-ChildItem -Recurse \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\\\\backend\\\\app\" | Where-Object { -not $_.PSIsContainer } | Select-Object FullName | Sort-Object FullName)",
       "Bash(..venvScriptspython.exe -c 'from passlib.context import CryptContext; pwd = CryptContext\\(schemes=['\\\\''bcrypt'\\\\''], deprecated='\\\\''auto'\\\\''\\); print\\(pwd.verify\\('\\\\''admin'\\\\'', '\\\\''$2b$12$qQwuHcseXmSdbH.rh36U..DEjr6kjQmyZeTYxETpdyB2fPvRFjQIC'\\\\''\\)\\)')",
       "PowerShell(New-Item *)",
-      "PowerShell(Test-Path *)"
+      "PowerShell(Test-Path *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "Bash(Sort-Object FullName)",
+      "Bash(.venv\\\\Scripts\\\\uv pip *)",
+      "PowerShell(Get-Command *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\Projects\\\\2026\\\\Service Layer + Router\\\\Python\\\\App\\\\client\\\\src\" -Recurse -File)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "PowerShell(head *)"
     ]
   }
 }
