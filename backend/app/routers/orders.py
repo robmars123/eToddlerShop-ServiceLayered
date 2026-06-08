@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -8,6 +8,14 @@ from app.schemas.auth_schema import TokenData
 from app.schemas.order_schema import OrderAnalytics, OrderCreate, OrderResponse, OrderUpdate
 from app.services.auth.auth_service import get_current_user, require_admin
 from app.services.orders.orders_service import OrderService
+from app.services.email.event_publisher import EventPublisher, get_order_event_publisher
+from app.services.email.events import (
+    OrderCancelledEvent,
+    OrderDeletedEvent,
+    OrderItemData,
+    OrderPlacedEvent,
+    OrderStatusChangedEvent,
+)
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -56,38 +64,67 @@ async def list_user_orders(
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     data: OrderCreate,
+    background_tasks: BackgroundTasks,
     service: Annotated[OrderService, Depends(get_order_service)],
+    publisher: Annotated[EventPublisher, Depends(get_order_event_publisher)],
     current_user: Annotated[TokenData, Depends(get_current_user)],
 ):
     """Create an order for the authenticated user. user_id from token always takes precedence."""
     order_data = data.model_copy(update={"user_id": current_user.user_id})
-    return await service.create_order(order_data)
+    order = await service.create_order(order_data)
+    total = round(sum(i.quantity * i.unit_price for i in order.items), 2)
+    background_tasks.add_task(publisher.publish, OrderPlacedEvent(
+        order_id=order.id,
+        user_id=order.user_id,
+        total=total,
+        items=[OrderItemData(product_id=i.product_id, quantity=i.quantity, unit_price=i.unit_price) for i in order.items],
+    ))
+    return order
 
 
 @router.post("/{order_id}/cancel", response_model=OrderResponse)
 async def cancel_order(
     order_id: int,
+    background_tasks: BackgroundTasks,
     service: Annotated[OrderService, Depends(get_order_service)],
+    publisher: Annotated[EventPublisher, Depends(get_order_event_publisher)],
     current_user: Annotated[TokenData, Depends(get_current_user)],
 ):
     """Cancel a pending order. Only the order owner may cancel."""
-    return await service.cancel_order(order_id, current_user.user_id)
+    order = await service.cancel_order(order_id, current_user.user_id)
+    background_tasks.add_task(publisher.publish, OrderCancelledEvent(
+        order_id=order.id,
+        user_id=order.user_id,
+    ))
+    return order
 
 
 @router.patch("/{order_id}/status", response_model=OrderResponse)
 async def update_order_status(
     order_id: int,
     data: OrderUpdate,
+    background_tasks: BackgroundTasks,
     service: Annotated[OrderService, Depends(get_order_service)],
+    publisher: Annotated[EventPublisher, Depends(get_order_event_publisher)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
-    return await service.update_order_status(order_id, data)
+    order = await service.update_order_status(order_id, data)
+    if data.status is not None:
+        background_tasks.add_task(publisher.publish, OrderStatusChangedEvent(
+            order_id=order.id,
+            user_id=order.user_id,
+            new_status=order.status.value,
+        ))
+    return order
 
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_order(
     order_id: int,
+    background_tasks: BackgroundTasks,
     service: Annotated[OrderService, Depends(get_order_service)],
+    publisher: Annotated[EventPublisher, Depends(get_order_event_publisher)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
-    await service.delete_order(order_id)
+    user_id = await service.delete_order(order_id)
+    background_tasks.add_task(publisher.publish, OrderDeletedEvent(order_id=order_id, user_id=user_id))

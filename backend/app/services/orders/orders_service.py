@@ -137,9 +137,11 @@ class OrderService:
         )
         return _to_response(result2.scalar_one())
 
-    async def delete_order(self, order_id: int) -> None:
+    async def delete_order(self, order_id: int) -> int:
         order = await self.db.get(Order, order_id)
         if order is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        user_id = order.user_id
         await self.db.delete(order)
         await self.db.commit()
+        return user_id

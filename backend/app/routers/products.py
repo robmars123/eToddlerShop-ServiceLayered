@@ -10,6 +10,13 @@ from app.services.auth.auth_service import require_admin
 from app.services.ai.embedding_service import EmbeddingService
 from app.services.products.products_service import ProductService
 from app.services.ai.recommend_service import RecommendService
+from app.services.email.event_publisher import EventPublisher, get_product_event_publisher
+from app.services.email.events import (
+    ProductCreatedEvent,
+    ProductDeletedEvent,
+    ProductImageUpdatedEvent,
+    ProductUpdatedEvent,
+)
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -60,11 +67,15 @@ async def create_product(
     service: Annotated[ProductService, Depends(get_product_service)],
     embedding: Annotated[EmbeddingService, Depends(get_embedding_service)],
     recommend: Annotated[RecommendService, Depends(get_recommend_service)],
+    publisher: Annotated[EventPublisher, Depends(get_product_event_publisher)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
     product = await service.create_product(data)
     background_tasks.add_task(embedding.embed_single_product, product.id, product.name, product.description, product.price)
     background_tasks.add_task(recommend.invalidate_search_cache)
+    background_tasks.add_task(publisher.publish, ProductCreatedEvent(
+        product_id=product.id, name=product.name, description=product.description, price=product.price,
+    ))
     return product
 
 
@@ -76,11 +87,15 @@ async def update_product(
     service: Annotated[ProductService, Depends(get_product_service)],
     embedding: Annotated[EmbeddingService, Depends(get_embedding_service)],
     recommend: Annotated[RecommendService, Depends(get_recommend_service)],
+    publisher: Annotated[EventPublisher, Depends(get_product_event_publisher)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
     product = await service.update_product(product_id, data)
     background_tasks.add_task(embedding.embed_single_product, product.id, product.name, product.description, product.price)
     background_tasks.add_task(recommend.invalidate_search_cache)
+    background_tasks.add_task(publisher.publish, ProductUpdatedEvent(
+        product_id=product.id, name=product.name, description=product.description, price=product.price,
+    ))
     return product
 
 
@@ -91,18 +106,22 @@ async def delete_product(
     service: Annotated[ProductService, Depends(get_product_service)],
     embedding: Annotated[EmbeddingService, Depends(get_embedding_service)],
     recommend: Annotated[RecommendService, Depends(get_recommend_service)],
+    publisher: Annotated[EventPublisher, Depends(get_product_event_publisher)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
-    await service.delete_product(product_id)
+    name = await service.delete_product(product_id)
     background_tasks.add_task(embedding.delete_product_embedding, product_id)
     background_tasks.add_task(recommend.invalidate_search_cache)
+    background_tasks.add_task(publisher.publish, ProductDeletedEvent(product_id=product_id, name=name))
 
 
 @router.post("/{product_id}/image", response_model=ProductResponse)
 async def upload_product_image(
     product_id: int,
     file: UploadFile,
+    background_tasks: BackgroundTasks,
     service: Annotated[ProductService, Depends(get_product_service)],
+    publisher: Annotated[EventPublisher, Depends(get_product_event_publisher)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
@@ -110,4 +129,8 @@ async def upload_product_image(
     content = await file.read(_MAX_IMAGE_BYTES + 1)
     if len(content) > _MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="Image must be 5 MB or smaller.")
-    return await service.upload_image(product_id, file.filename or "image", content)
+    product = await service.upload_image(product_id, file.filename or "image", content)
+    background_tasks.add_task(publisher.publish, ProductImageUpdatedEvent(
+        product_id=product_id, name=product.name, image_url=product.image_url or "",
+    ))
+    return product

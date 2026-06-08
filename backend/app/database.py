@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     database_ssl: bool = False
     redis_url: str = "redis://localhost:6379"
 
+    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+
+    # SMTP — defaults point to smtp4dev (dev only). Set smtp_use_tls=true for production.
+    smtp_host: str = "localhost"
+    smtp_port: int = 2525
+    smtp_from: str = "noreply@app.local"
+    smtp_to: str = ""  # comma-separated notification recipients
+    smtp_use_tls: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

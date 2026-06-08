@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,8 @@ from app.services.ai.orchestrator.history_repository import RedisHistoryReposito
 from app.services.ai.recommend_service import RecommendService
 from app.services.ai.speech_service import SpeechService
 from app.services.auth.auth_service import require_admin
+from app.services.email.event_publisher import EventPublisher, get_product_event_publisher
+from app.services.email.events import ProductsIndexedEvent
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -74,10 +76,16 @@ async def chat_history(
 
 @router.post("/embed-products", response_model=EmbedProductsResponse)
 async def embed_products(
+    background_tasks: BackgroundTasks,
     service: Annotated[EmbeddingService, Depends(get_embedding_service)],
+    publisher: Annotated[EventPublisher, Depends(get_product_event_publisher)],
     _: Annotated[TokenData, Depends(require_admin)],
 ):
-    return await service.embed_products()
+    result = await service.embed_products()
+    background_tasks.add_task(publisher.publish, ProductsIndexedEvent(
+        count=result.indexed, message=result.message,
+    ))
+    return result
 
 
 @router.post("/recommend", response_model=RecommendResponse)

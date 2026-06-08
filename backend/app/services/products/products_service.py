@@ -103,15 +103,17 @@ class ProductService:
         await _cache_delete(_PRODUCTS_KEY)
         return ProductResponse.model_validate(product)
 
-    async def delete_product(self, product_id: int) -> None:
+    async def delete_product(self, product_id: int) -> str:
         product = await self.db.get(Product, product_id)
         if product is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+        name = product.name
         if product.image_url:
             self._delete_blob(product.image_url)
         await self.db.delete(product)
         await self.db.commit()
         await _cache_delete(_PRODUCTS_KEY)
+        return name
 
     async def upload_image(self, product_id: int, filename: str, content: bytes) -> ProductResponse:
         product = await self.db.get(Product, product_id)
