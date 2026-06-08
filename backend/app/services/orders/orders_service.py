@@ -1,13 +1,52 @@
+import json
+
+import redis.asyncio as aioredis
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.database import settings
 from app.models.order import Order, OrderItem
 from app.schemas.order_schema import (
     OrderAnalytics, OrderCreate, OrderItemResponse, OrderPeriodStat,
     OrderResponse, OrderStatus, OrderUpdate,
 )
+
+_redis: aioredis.Redis = aioredis.from_url(
+    settings.redis_url,
+    encoding="utf-8",
+    decode_responses=True,
+)
+
+_ORDERS_KEY = "orders:all"
+_ANALYTICS_KEY = "orders:analytics"
+_ORDERS_TTL = 60
+
+
+def _user_orders_key(user_id: int) -> str:
+    return f"orders:user:{user_id}"
+
+
+async def _cache_get(key: str) -> str | None:
+    try:
+        return await _redis.get(key)
+    except Exception:
+        return None
+
+
+async def _cache_set(key: str, value: str, ex: int) -> None:
+    try:
+        await _redis.set(key, value, ex=ex)
+    except Exception:
+        pass
+
+
+async def _cache_delete(*keys: str) -> None:
+    try:
+        await _redis.delete(*keys)
+    except Exception:
+        pass
 
 
 def _to_response(order: Order) -> OrderResponse:
@@ -33,14 +72,25 @@ class OrderService:
         self.db = db
 
     async def list_orders(self) -> list[OrderResponse]:
+        cached = await _cache_get(_ORDERS_KEY)
+        if cached is not None:
+            return [OrderResponse.model_validate(o) for o in json.loads(cached)]
         result = await self.db.execute(select(Order).options(selectinload(Order.items)))
-        return [_to_response(o) for o in result.scalars().all()]
+        orders = [_to_response(o) for o in result.scalars().all()]
+        await _cache_set(_ORDERS_KEY, json.dumps([o.model_dump(mode="json") for o in orders]), ex=_ORDERS_TTL)
+        return orders
 
     async def list_user_orders(self, user_id: int) -> list[OrderResponse]:
+        key = _user_orders_key(user_id)
+        cached = await _cache_get(key)
+        if cached is not None:
+            return [OrderResponse.model_validate(o) for o in json.loads(cached)]
         result = await self.db.execute(
             select(Order).where(Order.user_id == user_id).options(selectinload(Order.items))
         )
-        return [_to_response(o) for o in result.scalars().all()]
+        orders = [_to_response(o) for o in result.scalars().all()]
+        await _cache_set(key, json.dumps([o.model_dump(mode="json") for o in orders]), ex=_ORDERS_TTL)
+        return orders
 
     async def create_order(self, data: OrderCreate) -> OrderResponse:
         order = Order(
@@ -57,7 +107,9 @@ class OrderService:
         result = await self.db.execute(
             select(Order).where(Order.id == order.id).options(selectinload(Order.items))
         )
-        return _to_response(result.scalar_one())
+        response = _to_response(result.scalar_one())
+        await _cache_delete(_ORDERS_KEY, _user_orders_key(data.user_id), _ANALYTICS_KEY)
+        return response
 
     async def update_order_status(self, order_id: int, data: OrderUpdate) -> OrderResponse:
         result = await self.db.execute(
@@ -72,9 +124,15 @@ class OrderService:
         result2 = await self.db.execute(
             select(Order).where(Order.id == order_id).options(selectinload(Order.items))
         )
-        return _to_response(result2.scalar_one())
+        response = _to_response(result2.scalar_one())
+        await _cache_delete(_ORDERS_KEY, _user_orders_key(order.user_id), _ANALYTICS_KEY)
+        return response
 
     async def get_analytics(self) -> OrderAnalytics:
+        cached = await _cache_get(_ANALYTICS_KEY)
+        if cached is not None:
+            return OrderAnalytics.model_validate_json(cached)
+
         async def _grouped(trunc: str) -> list[OrderPeriodStat]:
             rows = await self.db.execute(
                 select(
@@ -104,16 +162,17 @@ class OrderService:
             await _grouped("month"),
             await _grouped("year"),
         )
-        # Totals from all-time data before slicing for display windows
         total_orders = sum(s.count for s in by_year)
         total_revenue = round(sum(s.revenue for s in by_year), 2)
-        return OrderAnalytics(
+        analytics = OrderAnalytics(
             by_day=by_day[-30:],
             by_month=by_month[-12:],
             by_year=by_year,
             total_orders=total_orders,
             total_revenue=total_revenue,
         )
+        await _cache_set(_ANALYTICS_KEY, analytics.model_dump_json(), ex=_ORDERS_TTL)
+        return analytics
 
     async def cancel_order(self, order_id: int, user_id: int) -> OrderResponse:
         result = await self.db.execute(
@@ -135,7 +194,9 @@ class OrderService:
         result2 = await self.db.execute(
             select(Order).where(Order.id == order_id).options(selectinload(Order.items))
         )
-        return _to_response(result2.scalar_one())
+        response = _to_response(result2.scalar_one())
+        await _cache_delete(_ORDERS_KEY, _user_orders_key(user_id), _ANALYTICS_KEY)
+        return response
 
     async def delete_order(self, order_id: int) -> int:
         order = await self.db.get(Order, order_id)
@@ -144,4 +205,5 @@ class OrderService:
         user_id = order.user_id
         await self.db.delete(order)
         await self.db.commit()
+        await _cache_delete(_ORDERS_KEY, _user_orders_key(user_id), _ANALYTICS_KEY)
         return user_id

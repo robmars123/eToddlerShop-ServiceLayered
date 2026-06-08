@@ -23,6 +23,10 @@ _PRODUCTS_KEY = "products:all"
 _PRODUCTS_TTL = 60  # 1 minute
 
 
+def _product_key(product_id: int) -> str:
+    return f"product:{product_id}"
+
+
 async def _cache_get(key: str) -> str | None:
     try:
         return await _redis.get(key)
@@ -70,15 +74,32 @@ class ProductService:
         return products
 
     async def get_products_by_ids(self, ids: list[int]) -> list[ProductResponse]:
-        result = await self.db.execute(select(Product).where(Product.id.in_(ids)))
-        product_map = {p.id: ProductResponse.model_validate(p) for p in result.scalars().all()}
+        product_map: dict[int, ProductResponse] = {}
+        misses: list[int] = []
+        for pid in ids:
+            cached = await _cache_get(_product_key(pid))
+            if cached is not None:
+                product_map[pid] = ProductResponse.model_validate(json.loads(cached))
+            else:
+                misses.append(pid)
+        if misses:
+            result = await self.db.execute(select(Product).where(Product.id.in_(misses)))
+            for p in result.scalars().all():
+                response = ProductResponse.model_validate(p)
+                product_map[p.id] = response
+                await _cache_set(_product_key(p.id), response.model_dump_json(), ex=_PRODUCTS_TTL)
         return [product_map[i] for i in ids if i in product_map]
 
     async def get_product(self, product_id: int) -> ProductResponse:
+        cached = await _cache_get(_product_key(product_id))
+        if cached is not None:
+            return ProductResponse.model_validate(json.loads(cached))
         product = await self.db.get(Product, product_id)
         if product is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-        return ProductResponse.model_validate(product)
+        response = ProductResponse.model_validate(product)
+        await _cache_set(_product_key(product_id), response.model_dump_json(), ex=_PRODUCTS_TTL)
+        return response
 
     async def create_product(self, data: ProductCreate) -> ProductResponse:
         product = Product(name=data.name, description=data.description, price=data.price)
@@ -101,6 +122,7 @@ class ProductService:
         await self.db.commit()
         await self.db.refresh(product)
         await _cache_delete(_PRODUCTS_KEY)
+        await _cache_delete(_product_key(product_id))
         return ProductResponse.model_validate(product)
 
     async def delete_product(self, product_id: int) -> str:
@@ -113,6 +135,7 @@ class ProductService:
         await self.db.delete(product)
         await self.db.commit()
         await _cache_delete(_PRODUCTS_KEY)
+        await _cache_delete(_product_key(product_id))
         return name
 
     async def upload_image(self, product_id: int, filename: str, content: bytes) -> ProductResponse:
@@ -135,6 +158,7 @@ class ProductService:
         await self.db.commit()
         await self.db.refresh(product)
         await _cache_delete(_PRODUCTS_KEY)
+        await _cache_delete(_product_key(product_id))
         return ProductResponse.model_validate(product)
 
     def _upload_blob(self, blob_name: str, content: bytes, content_type: str) -> str:

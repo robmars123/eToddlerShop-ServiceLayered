@@ -222,6 +222,11 @@ app/
 | `emb:{md5(text)}` | 30 days | Never |
 | `rec:{md5(message)}` | 5 min | Any product mutation |
 | `products:all` | 60 sec | Any product mutation |
+| `product:{id}` | 60 sec | update, delete, image upload for that product |
+| `orders:all` | 60 sec | create, update status, cancel, delete |
+| `orders:user:{user_id}` | 60 sec | create, update status, cancel, delete (for that user) |
+| `orders:analytics` | 60 sec | create, update status, cancel, delete |
+| `users:all` | 60 sec | create, update, delete user |
 
 ---
 
